@@ -3,14 +3,25 @@
 import { useState, useRef, useEffect } from 'react'
 import { FloorObject, RoomPreset, useEditorStore } from '@/store/useEditorSotre';
 
+// 변 드래그할 때 필요한 정보 담아두려고 만든 인터페이스
+interface DraggingEdge {
+  obj: FloorObject;      // 지금 드래그하는 오브젝트
+  edgeIndex: number;     // 지금 드래그하는 변 인덱스
+  isHorizontal: boolean; // 수평선이면 true
+  isVertical: boolean;   // 수직선이면 true
+}
+
 export default function Canvas() {
   const { objects, selectedObject, addRoom, setObjects, setSelectedObject } = useEditorStore();
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   
-  // 드래그 상태 관리 (어떤 오브젝트를 드래그 중인지)
+  // 어떤 오브젝트 드래그 중인지 저장하는 ref
   const draggingObjectRef = useRef<FloorObject | null>(null);
   const dragStartPosRef = useRef({ x: 0, y: 0 });
+  
+  // 어떤 변 드래그 중인지 저장하는 ref
+  const draggingEdgeRef = useRef<DraggingEdge | null>(null);
   
   // state로 했더니 useEffect에서 클로저 때문에 값이 초기화 되지 않아서 ref로 변경
   // const [isPanning, setIsPanning] = useState(false);
@@ -18,10 +29,14 @@ export default function Canvas() {
   const isPanningRef = useRef(false);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [isEdgeDragging, setIsEdgeDragging] = useState(false);
 
   const GRID_SIZE_SMALL = 30;
   const GRID_SIZE_BIG = 150;
   const DRAG_SIZE_OFFSET = 3;
+  const EDGE_SNAP_SIZE = DRAG_SIZE_OFFSET; // 변 드래그할 때 스냅되는 크기
+  const MIN_WIDTH = 100;  // 오브젝트 최소 너비
+  const MIN_HEIGHT = 100;  // 오브젝트 최소 높이
 
   const [viewBox, setViewBox] = useState({
     x: 0,
@@ -29,6 +44,16 @@ export default function Canvas() {
     w: 1920,
     h: 1080,
   });
+
+  // 오브젝트의 좌상단 좌표 계산하는 함수 (텍스트 위치 잡을 때 씀)
+  const getObjectTopLeft = (points: { x: number, y: number }[]) => {
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    return {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+    };
+  };
 
   // 마우스 좌표 > SVG 좌표 변환 함수
   const clientToSvg = (clientX: number, clientY: number) => {
@@ -79,12 +104,98 @@ export default function Canvas() {
     };
   };
 
-  // 마우스 이동 시 오브젝트 위치 업데이트
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (!draggingObjectRef.current || e.buttons !== 1) return;
+  // =====================================================
+  // 변(Edge) 드래그 관련 함수들
+  // =====================================================
+  
+  // 변 클릭하면 드래그 시작하는 함수
+  // 수평선인지 수직선인지 판단해서 ref에 저장해둠
+  const handleEdgeMouseDown = (e: React.MouseEvent, obj: FloorObject, edgeIndex: number) => {
+    e.stopPropagation(); // 이거 안하면 오브젝트 전체가 드래그됨
+    e.preventDefault();
+    
+    // 클릭한 변의 두 점 가져옴
+    const p1 = obj.points[edgeIndex];
+    const p2 = obj.points[(edgeIndex + 1) % obj.points.length];
+    
+    // Y좌표가 같으면 수평선, X좌표가 같으면 수직선
+    const isHorizontal = p1.y === p2.y;
+    const isVertical = p1.x === p2.x;
+    
+    // 드래그 상태 저장해둠
+    draggingEdgeRef.current = {
+      obj,
+      edgeIndex,
+      isHorizontal,
+      isVertical,
+    };
+    
+    setIsEdgeDragging(true);
+  };
 
+  // 변 드래그 중일 때 마우스 움직이면 호출되는 함수
+  // 수평선은 위아래로만, 수직선은 좌우로만 움직이게 해서 형태 유지함
+  const handleEdgeMouseMove = (svgPos: { x: number, y: number }) => {
+    if (!draggingEdgeRef.current) return;
+    
+    const { obj, edgeIndex, isHorizontal, isVertical } = draggingEdgeRef.current;
+    const nextIndex = (edgeIndex + 1) % obj.points.length;
+    
+    // 원본 배열 직접 수정하면 안돼서 복사함
+    const newPoints = obj.points.map(p => ({ ...p }));
+
+    if (isHorizontal) {
+      // 수평선이면 Y축으로만 이동시킴
+      const newY = Math.round((svgPos.y - obj.y) / EDGE_SNAP_SIZE) * EDGE_SNAP_SIZE;
+      // 새로운 점으로 바꿔보고 크기 체크
+      
+      newPoints[edgeIndex].y = newY;
+      newPoints[nextIndex].y = newY; // 두 점 다 같이 움직여야 선이 유지됨
+
+      // bounding box 계산해서 높이 체크
+      const ys = newPoints.map(p => p.y);
+      const height = Math.max(...ys) - Math.min(...ys);
+      // 최소 높이보다 작아지면 적용 안함
+      if(height <= MIN_HEIGHT) return;
+      // 오브젝트 높이
+    } else if (isVertical) {
+      // 수직선이면 X축으로만 이동시킴
+      const newX = Math.round((svgPos.x - obj.x) / EDGE_SNAP_SIZE) * EDGE_SNAP_SIZE;
+      newPoints[edgeIndex].x = newX;
+      newPoints[nextIndex].x = newX; // 두 점 다 같이 움직여야 선이 유지됨
+
+      // bounding box 계산해서 너비 체크
+      const xs = newPoints.map(p => p.x);
+      const width = Math.max(...xs) - Math.min(...xs);
+      // 최소 너비보다 작아지면 적용 안함
+      if(width <= MIN_WIDTH) return;
+      // 오브젝트 너비
+    }
+    
+    // store에 있는 objects 업데이트
+    setObjects(objects.map(o => 
+      o.id === obj.id ? { ...o, points: newPoints } : o
+    ));
+    
+    // 오른쪽 위 디버그 패널에도 반영되게 selectedObject도 업데이트
+    if (selectedObject?.id === obj.id) {
+      setSelectedObject({ ...obj, points: newPoints });
+    }
+  };
+
+  // 마우스 움직일 때 오브젝트 이동이랑 변 드래그 둘 다 여기서 처리함
+  const handleMouseMove = (e: React.MouseEvent) => {
     const svgPos = clientToSvg(e.clientX, e.clientY);
     
+    // 변 드래그 중이면 변 이동부터 처리하고 return
+    if (draggingEdgeRef.current && e.buttons === 1) {
+      handleEdgeMouseMove(svgPos);
+      return;
+    }
+    
+    // 오브젝트 드래그 처리
+    if (!draggingObjectRef.current || e.buttons !== 1) return;
+
     // 새 위치 계산 (클릭 오프셋 반영)
     const newX = svgPos.x - dragStartPosRef.current.x;
     const newY = svgPos.y - dragStartPosRef.current.y;
@@ -104,7 +215,9 @@ export default function Canvas() {
   // 마우스 떼면 드래그 종료
   const handleMouseUp = () => {
     draggingObjectRef.current = null;
+    draggingEdgeRef.current = null;
     setIsDragging(false);
+    setIsEdgeDragging(false);
   };
 
   useEffect(() => {
@@ -196,6 +309,7 @@ export default function Canvas() {
       }
     }
     
+    // 오브젝트 밖을 클릭하면 선택 해제
     const handleClickObjectOutside = (e: MouseEvent) => {
       const target = e.target as Element;
       
@@ -311,6 +425,7 @@ export default function Canvas() {
             onMouseDown={(e) => handleObjectMouseDown(e, obj)}
             style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
           >
+            {/* 오브젝트 본체 그리는 polygon */}
             <polygon
               points={obj.points.map(p => `${p.x},${p.y}`).join(' ')}
               fill={obj.color}
@@ -318,9 +433,49 @@ export default function Canvas() {
               strokeWidth="3"
               style={{ fillOpacity: 0.5}}
             />
-            <text x="10" y="25" fill="#4A90E2" className="font-bold select-none">
-              {obj.name}
-            </text>
+            
+            {/* 
+              선택된 오브젝트한테만 변 핸들 보여줌
+              변 클릭해서 드래그하면 크기 조절됨
+              수평선은 위아래로, 수직선은 좌우로 움직임
+            */}
+            {selectedObject?.id === obj.id && obj.points.map((point, i) => {
+              // 다음 점 구함 (마지막 점 다음은 첫번째 점으로 연결)
+              const nextPoint = obj.points[(i + 1) % obj.points.length];
+              // Y좌표 같으면 수평선
+              const isHorizontal = point.y === nextPoint.y;
+              
+              return (
+                <line
+                  key={`edge-${i}`}
+                  x1={point.x}
+                  y1={point.y}
+                  x2={nextPoint.x}
+                  y2={nextPoint.y}
+                  stroke="blue"
+                  strokeWidth={isEdgeDragging ? "8" : "6"}
+                  strokeOpacity="0.4"
+                  // 수평선이면 위아래 커서, 수직선이면 좌우 커서로 보여줌
+                  style={{ cursor: isHorizontal ? 'ns-resize' : 'ew-resize' }}
+                  onMouseDown={(e) => handleEdgeMouseDown(e, obj, i)}
+                />
+              );
+            })}
+            
+            {/* 오브젝트 좌상단 기준 (20, 20) 위치에 텍스트 배치 */}
+            {(() => {
+              const topLeft = getObjectTopLeft(obj.points);
+              return (
+                <text 
+                  x={topLeft.x + 20} 
+                  y={topLeft.y + 30} 
+                  fill="#4A90E2" 
+                  className="font-bold select-none"
+                >
+                  {obj.name}
+                </text>
+              );
+            })()}
           </g>
         ))}
       </svg>
