@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { FloorObject, RoomPreset, useEditorStore } from '@/store/useEditorSotre';
+import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
 
 // 변 드래그할 때 필요한 정보 담아두려고 만든 인터페이스
 interface DraggingEdge {
@@ -12,13 +13,14 @@ interface DraggingEdge {
 }
 
 export default function Canvas() {
-  const { objects, selectedObject, addRoom, setObjects, setSelectedObject } = useEditorStore();
+  const { objects, selectedObject, addRoom, setObjects, setSelectedObject, startDrag, endDrag } = useEditorStore();
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   
   // 어떤 오브젝트 드래그 중인지 저장하는 ref
   const draggingObjectRef = useRef<FloorObject | null>(null);
-  const dragStartPosRef = useRef({ x: 0, y: 0 });
+  const dragStartPosRef = useRef({ x: 0, y: 0 }); // 클릭 오프셋
+  const dragInitialPosRef = useRef({ x: 0, y: 0 }); // 드래그 시작 시 오브젝트 위치 (Shift 제한용)
   
   // 어떤 변 드래그 중인지 저장하는 ref
   const draggingEdgeRef = useRef<DraggingEdge | null>(null);
@@ -31,12 +33,12 @@ export default function Canvas() {
   const [isDragging, setIsDragging] = useState(false);
   const [isEdgeDragging, setIsEdgeDragging] = useState(false);
 
-  const GRID_SIZE_SMALL = 30;
-  const GRID_SIZE_BIG = 150;
-  const DRAG_SIZE_OFFSET = 3;
+  const GRID_SIZE_SMALL = FLOOR_PLAN_CONFIG.GRID_SIZE_SMALL;
+  const GRID_SIZE_BIG = FLOOR_PLAN_CONFIG.GRID_SIZE_BIG;
+  const DRAG_SIZE_OFFSET = FLOOR_PLAN_CONFIG.DRAG_SIZE_OFFSET;
   const EDGE_SNAP_SIZE = DRAG_SIZE_OFFSET; // 변 드래그할 때 스냅되는 크기
-  const MIN_WIDTH = 100;  // 오브젝트 최소 너비
-  const MIN_HEIGHT = 100;  // 오브젝트 최소 높이
+  const MIN_WIDTH = FLOOR_PLAN_CONFIG.MIN_WIDTH;  // 오브젝트 최소 너비 (50px = 1.1m)
+  const MIN_HEIGHT = FLOOR_PLAN_CONFIG.MIN_HEIGHT;  // 오브젝트 최소 높이 (50px = 1.1m)
 
   const [viewBox, setViewBox] = useState({
     x: 0,
@@ -53,6 +55,54 @@ export default function Canvas() {
       x: Math.min(...xs),
       y: Math.min(...ys),
     };
+  };
+
+  // 오브젝트의 중심 좌표 계산하는 함수 (회전 기준점으로 씀)
+  const getObjectCenter = (points: { x: number, y: number }[]) => {
+    const xs = points.map(p => p.x);
+    const ys = points.map(p => p.y);
+    return {
+      x: (Math.min(...xs) + Math.max(...xs)) / 2,
+      y: (Math.min(...ys) + Math.max(...ys)) / 2,
+    };
+  };
+
+  // borderColor를 기반으로 활성화 시 더 눈에 띄는 색상 계산
+  const getActiveBorderColor = (borderColor: string): string => {
+    // hex 색상을 RGB로 변환
+    const hex = borderColor.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    
+    // 밝기 계산 (0~255)
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+    
+    // 밝기가 어두우면 밝게, 밝으면 어둡게 조정
+    // 채도도 높여서 더 눈에 띄게
+    let newR = r;
+    let newG = g;
+    let newB = b;
+    
+    if (brightness < 128) {
+      // 어두운 색상이면 밝게 (최대 255까지)
+      newR = Math.min(255, r + 80);
+      newG = Math.min(255, g + 80);
+      newB = Math.min(255, b + 80);
+    } else {
+      // 밝은 색상이면 어둡게 (최소 0까지)
+      newR = Math.max(0, r - 80);
+      newG = Math.max(0, g - 80);
+      newB = Math.max(0, b - 80);
+    }
+    
+    // RGB를 hex로 변환
+    const toHex = (n: number) => {
+      const hex = Math.round(n).toString(16);
+      return hex.length === 1 ? '0' + hex : hex;
+    };
+    
+    return `#${toHex(newR)}${toHex(newG)}${toHex(newB)}`;
   };
 
   // 마우스 좌표 > SVG 좌표 변환 함수
@@ -93,6 +143,7 @@ export default function Canvas() {
     if (e.buttons !== 1) return;
     e.stopPropagation(); // 캔버스 패닝 방지
     
+    startDrag(); // 드래그 시작 - 히스토리 저장 멈춤
     draggingObjectRef.current = obj;
     setSelectedObject(obj);
     
@@ -101,6 +152,12 @@ export default function Canvas() {
     dragStartPosRef.current = {
       x: svgPos.x - obj.x,
       y: svgPos.y - obj.y,
+    };
+    
+    // 드래그 시작 시점의 오브젝트 위치 저장 (Shift 제한용)
+    dragInitialPosRef.current = {
+      x: obj.x,
+      y: obj.y,
     };
   };
 
@@ -113,6 +170,8 @@ export default function Canvas() {
   const handleEdgeMouseDown = (e: React.MouseEvent, obj: FloorObject, edgeIndex: number) => {
     e.stopPropagation(); // 이거 안하면 오브젝트 전체가 드래그됨
     e.preventDefault();
+    
+    startDrag(); // 드래그 시작 - 히스토리 저장 멈춤
     
     // 클릭한 변의 두 점 가져옴
     const p1 = obj.points[edgeIndex];
@@ -197,23 +256,43 @@ export default function Canvas() {
     if (!draggingObjectRef.current || e.buttons !== 1) return;
 
     // 새 위치 계산 (클릭 오프셋 반영)
-    const newX = svgPos.x - dragStartPosRef.current.x;
-    const newY = svgPos.y - dragStartPosRef.current.y;
+    let newX = svgPos.x - dragStartPosRef.current.x;
+    let newY = svgPos.y - dragStartPosRef.current.y;
+    
+    // Shift 키가 눌려있으면 더 큰 변화량 방향으로만 이동
+    if (e.shiftKey) {
+      const deltaX = Math.abs(newX - dragInitialPosRef.current.x);
+      const deltaY = Math.abs(newY - dragInitialPosRef.current.y);
+      
+      if (deltaX > deltaY) {
+        // X 방향 이동이 더 크면 Y는 고정 (좌우 이동)
+        newY = dragInitialPosRef.current.y;
+      } else {
+        // Y 방향 이동이 더 크면 X는 고정 (상하 이동)
+        newX = dragInitialPosRef.current.x;
+      }
+    }
     
     // 격자 스냅
     const snappedX = Math.round(newX / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
     const snappedY = Math.round(newY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
-
+    
     setObjects(objects.map(obj => 
       obj.id === draggingObjectRef.current!.id 
         ? { ...obj, x: snappedX, y: snappedY } 
         : obj
     ));
+    setSelectedObject({ ...draggingObjectRef.current!, x: snappedX, y: snappedY });
     setIsDragging(true);
   };
 
   // 마우스 떼면 드래그 종료
   const handleMouseUp = () => {
+    // 드래그 중이었으면 히스토리에 저장
+    if (draggingObjectRef.current || draggingEdgeRef.current) {
+      endDrag();
+    }
+    
     draggingObjectRef.current = null;
     draggingEdgeRef.current = null;
     setIsDragging(false);
@@ -265,7 +344,7 @@ export default function Canvas() {
 
     const handleClickWheel = (e : MouseEvent) =>{
       if(e.button === 1){
-        e.preventDefault()
+    e.preventDefault()
         isPanningRef.current = true;
         lastMousePosRef.current = { x: e.clientX, y: e.clientY};
       }
@@ -299,26 +378,69 @@ export default function Canvas() {
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      const { selectedObject, objects, setObjects, setSelectedObject, undo, redo } = useEditorStore.getState();
+      
+      // Ctrl+Z: 실행 취소 (Undo)
+      if (e.ctrlKey && e.key === 'z') {
+        e.preventDefault();
+        undo();
+        return;
+      }
+      
+      // Ctrl+Y 또는 Ctrl+Shift+Z: 다시 실행 (Redo)
+      if ((e.ctrlKey && e.key === 'y') || (e.ctrlKey && e.shiftKey && e.key === 'Z')) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      
       if (e.key === 'Delete') {
         // state로 하니까 클로져 때문에 또 안됨, zustand에 스테이트 값이 있어서 스테이트 값을 zustand에서 가져오기
-        const { selectedObject, objects, setObjects, setSelectedObject } = useEditorStore.getState();
         if (selectedObject) {
           setObjects(objects.filter(obj => obj.id !== selectedObject.id));
           setSelectedObject(null);
         }
+        return;
+      }
+      
+      // 방향키 입력시 오브젝트 DRAG_SIZE_OFFSET만큼 이동
+      if (!selectedObject) return; // 선택된 오브젝트가 없으면 무시
+      
+      if (e.key === 'ArrowUp') {
+        e.preventDefault(); 
+        setObjects(objects.map(obj => 
+          obj.id === selectedObject.id ? { ...obj, y: obj.y - DRAG_SIZE_OFFSET } : obj
+        ));
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault(); 
+        setObjects(objects.map(obj => 
+          obj.id === selectedObject.id ? { ...obj, y: obj.y + DRAG_SIZE_OFFSET } : obj
+        ));
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault(); 
+        setObjects(objects.map(obj => 
+          obj.id === selectedObject.id ? { ...obj, x: obj.x - DRAG_SIZE_OFFSET } : obj
+        ));
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault(); 
+        setObjects(objects.map(obj => 
+          obj.id === selectedObject.id ? { ...obj, x: obj.x + DRAG_SIZE_OFFSET } : obj
+        ));
       }
     }
     
-    // 오브젝트 밖을 클릭하면 선택 해제
+    // svg 위에서 선택된 오브젝트가 아닌 곳 클릭하면 선택 해제
     const handleClickObjectOutside = (e: MouseEvent) => {
       const target = e.target as Element;
+      const { selectedObject, setSelectedObject } = useEditorStore.getState();
       
-      // 클릭한 요소가 object 내부인지 확인 (g 태그나 그 자식들)
-      const clickedObject = target.closest('g[id]');
+      // 클릭한 요소가 어떤 오브젝트에 속하는지 확인
+      const clickedObjectElement = target.closest('g[id]');
+      const clickedObjectId = clickedObjectElement?.getAttribute('id');
       
-      // object가 아닌 곳을 클릭했으면 선택 해제
-      if (!clickedObject) {
-        const { setSelectedObject } = useEditorStore.getState();
+      // 선택된 오브젝트가 아닌 곳 클릭했으면 선택 해제
+      // (다른 오브젝트 클릭하거나 빈 공간 클릭했을 때)
+      if (!clickedObjectId || clickedObjectId !== selectedObject?.id) {
         setSelectedObject(null);
       }
     }
@@ -327,36 +449,22 @@ export default function Canvas() {
     svgElement.addEventListener('mousedown', handleClickWheel);
     svgElement.addEventListener('mousemove', handleMoveWheel);
     svgElement.addEventListener('mouseup', handleMouseUpNative);
+    svgElement.addEventListener('click', handleClickObjectOutside); // svg에서만 동작
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('click', handleClickObjectOutside);
     
     return () => {
       svgElement.removeEventListener('wheel', onWheelZoomNative);
       svgElement.removeEventListener('mousedown', handleClickWheel);
       svgElement.removeEventListener('mousemove', handleMoveWheel);
       svgElement.removeEventListener('mouseup', handleMouseUpNative);
+      svgElement.removeEventListener('click', handleClickObjectOutside);
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('click', handleClickObjectOutside);
     };
   }, [])
 
 
   return (
     <div ref={containerRef} className="w-full h-full bg-[#F1F3F8]">
-      <pre style={{ 
-        position: 'fixed', 
-        top: 10, 
-        right: 10, 
-        background: '#1e1e1e', 
-        color: '#fff',
-        padding: '12px',
-        borderRadius: '8px',
-        fontSize: '12px',
-        maxWidth: '300px',
-        overflow: 'auto'
-      }}>
-        {JSON.stringify(selectedObject, null, 2)}
-      </pre>
       <svg 
         ref={svgRef}
         className="w-full h-full"
@@ -401,19 +509,20 @@ export default function Canvas() {
             ></path>
           </pattern>
         </defs>
+        {/* 배경 격자 - 클릭하면 선택 해제 */}
         <rect 
           x={viewBox.x} 
           y={viewBox.y} 
           width={viewBox.w} 
           height={viewBox.h} 
-          fill="url(#largeGrid)" 
+          fill="url(#largeGrid)"
+          onClick={() => setSelectedObject(null)}
         />
         <circle cx="0" cy="0" r="10" fill="red" />
         <text x="15" y="20" fontSize="20" fill="red">Origin (0,0)</text>
         
-        {/* 선택한 오브젝트를 가장 위에 랜더링 하려고 했는데 svg에서는 z-index가 안돼서 태그 순서를 변경 */}
         {[...objects].sort((a, b) => {
-          // 선택된 오브젝트를 맨 뒤로 (가장 위에 렌더링)
+          // 선택한 오브젝트를 가장 위에 랜더링 하려고 했는데 svg에서는 z-index가 안돼서 태그 순서를 변경 
           if (a.id === selectedObject?.id) return 1;
           if (b.id === selectedObject?.id) return -1;
           return 0;
@@ -421,7 +530,7 @@ export default function Canvas() {
           <g 
             id={obj.id}
             key={obj.id} 
-            transform={`translate(${obj.x}, ${obj.y})`} 
+            transform={`translate(${obj.x}, ${obj.y}) rotate(${obj.rotation ?? 0}, ${getObjectCenter(obj.points).x}, ${getObjectCenter(obj.points).y})`} 
             onMouseDown={(e) => handleObjectMouseDown(e, obj)}
             style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
           >
@@ -429,9 +538,8 @@ export default function Canvas() {
             <polygon
               points={obj.points.map(p => `${p.x},${p.y}`).join(' ')}
               fill={obj.color}
-              stroke={selectedObject?.id === obj.id ? 'blue' : 'black'}
-              strokeWidth="3"
-              style={{ fillOpacity: 0.5}}
+              stroke={selectedObject?.id === obj.id ? getActiveBorderColor(obj.borderColor) : obj.borderColor}
+              strokeWidth={pxToCm(5)}
             />
             
             {/* 
@@ -452,7 +560,7 @@ export default function Canvas() {
                   y1={point.y}
                   x2={nextPoint.x}
                   y2={nextPoint.y}
-                  stroke="blue"
+                  stroke={getActiveBorderColor(obj.borderColor)}
                   strokeWidth={isEdgeDragging ? "8" : "6"}
                   strokeOpacity="0.4"
                   // 수평선이면 위아래 커서, 수직선이면 좌우 커서로 보여줌
@@ -469,7 +577,7 @@ export default function Canvas() {
                 <text 
                   x={topLeft.x + 20} 
                   y={topLeft.y + 30} 
-                  fill="#4A90E2" 
+                  fill={obj.textColor ?? '#000000'} 
                   className="font-bold select-none"
                 >
                   {obj.name}

@@ -40,19 +40,11 @@ export default function BuildPanel() {
           </div>
         </div>
         <div className="mb-6">
-          <p className="text-sm font-medium mb-4">방 그리기</p>
+          <p className="text-sm font-medium mb-4">문 그리기</p>
           <div className="grid grid-cols-3 gap-2">
             <button className="flex items-center justify-center gap-2 flex-col">
               <Image src="/images/room-s.svg" alt="square" width={32} height={32} />
               <span className="text-xs font-medium text-gray-600">사각형</span>
-            </button>
-            <button className="flex items-center justify-center gap-2 flex-col">
-              <Image src="/images/room-l.svg" alt="l-shape" width={32} height={32} />
-              <span className="text-xs font-medium text-gray-600">L자형</span>
-            </button>
-            <button className="flex items-center justify-center gap-2 flex-col">
-              <Image src="/images/room-t.svg" alt="t-shape" width={32} height={32} />
-              <span className="text-xs font-medium text-gray-600">T자형</span>
             </button>
           </div>
         </div>
