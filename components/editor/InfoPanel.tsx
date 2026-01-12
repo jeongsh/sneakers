@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input"
 import { useEditorStore } from "@/store/useEditorSotre";
 import { useRef, useState, useEffect } from "react";
 import { FLOOR_PLAN_CONFIG, pxToM, mToPx } from "@/lib/floorPlanConstants";
+import { Button } from "../ui/button";
+import { RotateCwSquareIcon } from "lucide-react";
 
 const MIN_WIDTH_M = pxToM(FLOOR_PLAN_CONFIG.MIN_WIDTH);  // 오브젝트 최소 너비 (1.1m)
 const MIN_HEIGHT_M = pxToM(FLOOR_PLAN_CONFIG.MIN_HEIGHT);  // 오브젝트 최소 높이 (1.1m)
@@ -35,6 +37,27 @@ export default function InfoPanel() {
   // 입력 중인 크기 값을 관리하는 로컬 state (m 단위)
   const [widthInput, setWidthInput] = useState<string>(pxToM(size.w).toFixed(2));
   const [heightInput, setHeightInput] = useState<string>(pxToM(size.h).toFixed(2));
+
+  const handleClickRotation = () => {
+    if (!selectedObject) return;
+    const currentRotation = selectedObject?.rotation ?? 0;
+    let newRotation: 0 | 90 | 180 | 270;
+    switch (currentRotation) {
+      case 0:
+        newRotation = 90;
+        break;
+      case 90:
+        newRotation = 180;
+        break;
+      case 180:
+        newRotation = 270;
+        break;
+      case 270:
+        newRotation = 0;
+        break;
+    }
+    changeObjectInfo('rotation', newRotation);
+  };
   
   // selectedObject가 변경되면 입력값도 업데이트
   useEffect(() => {
@@ -192,20 +215,28 @@ export default function InfoPanel() {
       </div>
 
       {/* 회전 섹션 */}
-      <div className="px-4 py-3 border-b border-gray-100">
-        <h5 className="text-xs text-gray-500 mb-2">회전</h5>
-        <InputGroup className="w-24">
-          <InputGroupAddon align="inline-start" className="text-xs text-gray-400 w-6">
-            °
-          </InputGroupAddon>
-          <InputGroupInput 
-            type="number" 
-            className="text-xs"
-            value={selectedObject?.rotation ?? 0}
-            onChange={(e) => changeObjectInfo('rotation', Number(e.target.value))}
-          />
-        </InputGroup>
-      </div>
+      { selectedObject?.type !== 'room' && (
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h5 className="text-xs text-gray-500 mb-2">회전</h5>
+          <div className="flex gap-2">
+            <InputGroup className="w-24">
+              <InputGroupAddon align="inline-start" className="text-xs text-gray-400 w-6">
+                °
+              </InputGroupAddon>
+              <InputGroupInput 
+                type="number" 
+                className="text-xs"
+                value={selectedObject?.rotation ?? 0}
+                onChange={(e) => changeObjectInfo('rotation', Number(e.target.value))}
+                readOnly
+              />
+            </InputGroup>
+            <Button variant="outline" size="icon" className="" onClick={handleClickRotation}>
+              <RotateCwSquareIcon className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 크기 섹션 */}
       <div className="px-4 py-3 border-b border-gray-100">

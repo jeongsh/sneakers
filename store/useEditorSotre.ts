@@ -26,7 +26,7 @@ export interface FloorObject {
   color: string;
   borderColor: string;
   textColor?: string; // 텍스트 색상
-  rotation?: number;  // 회전 각도 (문, 창문용)
+  rotation?: 0 | 90 | 180 | 270;  // 회전 각도 (문, 창문용)
   width?: number;     // 너비 (문, 창문용)
   height?: number;    // 높이 (창문용)
   attachedTo?: string; // 부착된 오브젝트 ID (문, 창문이 벽에 붙을 때)

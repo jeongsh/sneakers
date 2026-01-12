@@ -527,10 +527,11 @@ export default function Canvas() {
           if (b.id === selectedObject?.id) return -1;
           return 0;
         }).map((obj) => (
+          // rotate(${obj.rotation ?? 0}, ${getObjectCenter(obj.points).x}, ${getObjectCenter(obj.points).y})
           <g 
             id={obj.id}
             key={obj.id} 
-            transform={`translate(${obj.x}, ${obj.y}) rotate(${obj.rotation ?? 0}, ${getObjectCenter(obj.points).x}, ${getObjectCenter(obj.points).y})`} 
+            transform={`translate(${obj.x}, ${obj.y})`} 
             onMouseDown={(e) => handleObjectMouseDown(e, obj)}
             style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
           >
