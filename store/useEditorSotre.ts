@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
+import { FLOOR_PLAN_CONFIG, pxToCm, cmToPx } from '@/lib/floorPlanConstants';
 
 export interface Point {
   x: number;
@@ -157,32 +157,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const id = crypto.randomUUID();
     let points: Point[] = [];
     let name = '';
-
+    let defaultRoomSize = pxToCm(300);
     switch (preset) {
       case 'square':
       points = [
-        { x: 0, y: 0 }, { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: 0 }, 
-        { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE }, 
-        { x: 0, y: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE }
+        { x: 0, y: 0 }, { x: defaultRoomSize, y: 0 }, 
+        { x: defaultRoomSize, y: defaultRoomSize }, 
+        { x: 0, y: defaultRoomSize }
       ];
         name = '정사각형 방';
         break;
       case 'l-shape':
       points = [
-        { x: 0, y: 0 }, { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: 0 }, 
-        { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: 100 }, 
-        { x: 100, y: 100 }, 
-        { x: 100, y: 200 }, 
-        { x: 0, y: 200 }
+        { x: 0, y: 0 }, { x: defaultRoomSize, y: 0 }, 
+        { x: defaultRoomSize, y: defaultRoomSize }, 
+        { x: defaultRoomSize, y: defaultRoomSize }, 
+        { x: defaultRoomSize, y: defaultRoomSize * 2 }, 
+        { x: 0, y: defaultRoomSize * 2 }
       ];
         name = 'L자형 방';
         break;
       case 't-shape':
       points = [
-        { x: 0, y: 0 }, { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: 0 }, 
-        { x: FLOOR_PLAN_CONFIG.DEFAULT_ROOM_SIZE, y: 100 },
-        { x: 150, y: 100 }, { x: 150, y: 200 }, { x: 50, y: 200 },
-        { x: 50, y: 100 }, { x: 0, y: 100 }
+        { x: 0, y: 0 }, { x: defaultRoomSize, y: 0 }, 
+        { x: defaultRoomSize, y: defaultRoomSize },
+        { x: defaultRoomSize, y: defaultRoomSize }, { x: defaultRoomSize, y: defaultRoomSize * 2 }, { x: defaultRoomSize / 2, y: defaultRoomSize * 2 },
+        { x: defaultRoomSize / 2, y: defaultRoomSize }, { x: 0, y: defaultRoomSize }
       ];
         name = 'T자형 방';
         break;
@@ -213,28 +213,31 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     switch (preset) {
       case 'single':
+        // 단일문: 90cm
+        width = cmToPx(90);
         points = [
-          { x: 0, y: 0 }, { x: 80, y: 0 }, 
-          { x: 80, y: doorHeight }, { x: 0, y: doorHeight }
+          { x: 0, y: 0 }, { x: width, y: 0 }, 
+          { x: width, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '단일문';
-        width = 80;
         break;
       case 'double':
+        // 양문: 160cm
+        width = cmToPx(160);
         points = [
-          { x: 0, y: 0 }, { x: 160, y: 0 }, 
-          { x: 160, y: doorHeight }, { x: 0, y: doorHeight }
+          { x: 0, y: 0 }, { x: width, y: 0 }, 
+          { x: width, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '양문';
-        width = 160;
         break;
       case 'sliding':
+        // 미닫이문: 180cm
+        width = cmToPx(180);
         points = [
-          { x: 0, y: 0 }, { x: 120, y: 0 }, 
-          { x: 120, y: doorHeight }, { x: 0, y: doorHeight }
+          { x: 0, y: 0 }, { x: width, y: 0 }, 
+          { x: width, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '미닫이문';
-        width = 120;
         break;
     }
 

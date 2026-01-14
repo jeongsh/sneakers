@@ -7,12 +7,12 @@ import {
 import { Input } from "@/components/ui/input"
 import { useEditorStore } from "@/store/useEditorSotre";
 import { useRef, useState, useEffect } from "react";
-import { FLOOR_PLAN_CONFIG, pxToM, mToPx } from "@/lib/floorPlanConstants";
+import { FLOOR_PLAN_CONFIG, pxToCm, cmToPx } from "@/lib/floorPlanConstants";
 import { Button } from "../ui/button";
 import { RotateCwSquareIcon, ArrowUpToLine, ArrowDownToLine } from "lucide-react";
 
-const MIN_WIDTH_M = pxToM(FLOOR_PLAN_CONFIG.MIN_WIDTH);  // 오브젝트 최소 너비 (1.1m)
-const MIN_HEIGHT_M = pxToM(FLOOR_PLAN_CONFIG.MIN_HEIGHT);  // 오브젝트 최소 높이 (1.1m)
+const MIN_WIDTH_CM = pxToCm(FLOOR_PLAN_CONFIG.MIN_WIDTH);  // 오브젝트 최소 너비 (75cm)
+const MIN_HEIGHT_CM = pxToCm(FLOOR_PLAN_CONFIG.MIN_HEIGHT);  // 오브젝트 최소 높이 (75cm)
 
 export default function InfoPanel() {
   const { selectedObject, objects, setObjects, changeObjectInfo, startDrag, endDrag } = useEditorStore();
@@ -34,9 +34,9 @@ export default function InfoPanel() {
 
   const size = getObjectSize();
   
-  // 입력 중인 크기 값을 관리하는 로컬 state (m 단위)
-  const [widthInput, setWidthInput] = useState<string>(pxToM(size.w).toFixed(2));
-  const [heightInput, setHeightInput] = useState<string>(pxToM(size.h).toFixed(2));
+  // 입력 중인 크기 값을 관리하는 로컬 state (cm 단위)
+  const [widthInput, setWidthInput] = useState<string>(pxToCm(size.w).toFixed(1));
+  const [heightInput, setHeightInput] = useState<string>(pxToCm(size.h).toFixed(1));
   
   // selectedObject가 변경되면 입력값도 업데이트
   useEffect(() => {
@@ -46,17 +46,17 @@ export default function InfoPanel() {
       return;
     }
     const currentSize = getObjectSize();
-    setWidthInput(pxToM(currentSize.w).toFixed(2));
-    setHeightInput(pxToM(currentSize.h).toFixed(2));
+    setWidthInput(pxToCm(currentSize.w).toFixed(1));
+    setHeightInput(pxToCm(currentSize.h).toFixed(1));
   }, [selectedObject?.id]);
 
-  // 크기 변경 핸들러 (중심점 기준으로 스케일링) - m 단위로 받아서 px로 변환
-  const handleSizeChange = (newWidthM: number, newHeightM: number) => {
+  // 크기 변경 핸들러 (중심점 기준으로 스케일링) - cm 단위로 받아서 px로 변환
+  const handleSizeChange = (newWidthCm: number, newHeightCm: number) => {
     if (!selectedObject) return;
     
-    // m를 px로 변환
-    const newWidth = mToPx(newWidthM);
-    const newHeight = mToPx(newHeightM);
+    // cm를 px로 변환
+    const newWidth = cmToPx(newWidthCm);
+    const newHeight = cmToPx(newHeightCm);
     
     const currentSize = getObjectSize();
     if (currentSize.w === 0 || currentSize.h === 0) return; // 크기가 0이면 무시
@@ -204,8 +204,13 @@ export default function InfoPanel() {
               className="flex-1 text-xs"
               onClick={() => {
                 // 맨 앞으로: 배열의 맨 뒤로 이동 (나중에 렌더링 = 위에 표시)
-                const newObjects = objects.filter(obj => obj.id !== selectedObject.id);
-                newObjects.push(selectedObject);
+                // room인 경우 종속된 door들도 함께 이동
+                const attachedDoors = selectedObject.type === 'room' 
+                  ? objects.filter(obj => obj.type === 'door' && obj.attachedTo === selectedObject.id)
+                  : [];
+                const idsToMove = [selectedObject.id, ...attachedDoors.map(d => d.id)];
+                const newObjects = objects.filter(obj => !idsToMove.includes(obj.id));
+                newObjects.push(selectedObject, ...attachedDoors);
                 setObjects(newObjects);
               }}
               title="맨 앞으로"
@@ -219,8 +224,13 @@ export default function InfoPanel() {
               className="flex-1 text-xs"
               onClick={() => {
                 // 맨 뒤로: 배열의 맨 앞으로 이동 (먼저 렌더링 = 아래에 표시)
-                const newObjects = objects.filter(obj => obj.id !== selectedObject.id);
-                newObjects.unshift(selectedObject);
+                // room인 경우 종속된 door들도 함께 이동
+                const attachedDoors = selectedObject.type === 'room' 
+                  ? objects.filter(obj => obj.type === 'door' && obj.attachedTo === selectedObject.id)
+                  : [];
+                const idsToMove = [selectedObject.id, ...attachedDoors.map(d => d.id)];
+                const newObjects = objects.filter(obj => !idsToMove.includes(obj.id));
+                newObjects.unshift(selectedObject, ...attachedDoors);
                 setObjects(newObjects);
               }}
               title="맨 뒤로"
@@ -281,7 +291,7 @@ export default function InfoPanel() {
 
       {/* 크기 섹션 */}
       <div className="px-4 py-3 border-b border-gray-100">
-        <h5 className="text-xs text-gray-500 mb-2">크기 (m)</h5>
+        <h5 className="text-xs text-gray-500 mb-2">크기 (cm)</h5>
         <div className="flex gap-2">
           <InputGroup className="flex-1">
             <InputGroupAddon align="inline-start" className="text-xs text-gray-400 w-6">
@@ -291,23 +301,23 @@ export default function InfoPanel() {
               type="number" 
               className="text-xs"
               value={widthInput}
-              min={MIN_WIDTH_M}
-              step="0.1"
+              min={MIN_WIDTH_CM}
+              step="1"
               onChange={(e) => {
                 setWidthInput(e.target.value); // 입력 중인 값만 업데이트
               }}
               onFocus={() => startDrag()}
               onBlur={(e) => {
-                const newWidthM = Number(e.target.value);
+                const newWidthCm = Number(e.target.value);
                 const currentSize = getObjectSize();
-                const currentWidthM = pxToM(currentSize.w);
-                const currentHeightM = pxToM(currentSize.h);
+                const currentWidthCm = pxToCm(currentSize.w);
+                const currentHeightCm = pxToCm(currentSize.h);
                 // 빈 값이거나 최소값 미만이면 현재 값으로 복원
-                if (isNaN(newWidthM) || newWidthM < MIN_WIDTH_M) {
-                  setWidthInput(currentWidthM.toFixed(2));
+                if (isNaN(newWidthCm) || newWidthCm < MIN_WIDTH_CM) {
+                  setWidthInput(currentWidthCm.toFixed(1));
                 } else {
-                  // 유효한 값이면 크기 변경 적용 (m 단위로 전달)
-                  handleSizeChange(newWidthM, currentHeightM);
+                  // 유효한 값이면 크기 변경 적용 (cm 단위로 전달)
+                  handleSizeChange(newWidthCm, currentHeightCm);
                 }
                 handleColorPickerEnd();
                 endDrag();
@@ -322,24 +332,24 @@ export default function InfoPanel() {
               type="number" 
               className="text-xs"
               value={heightInput}
-              min={MIN_HEIGHT_M}
-              step="0.1"
+              min={MIN_HEIGHT_CM}
+              step="1"
               readOnly={selectedObject?.type !== 'room'}
               onChange={(e) => {
                 setHeightInput(e.target.value); // 입력 중인 값만 업데이트
               }}
               onFocus={() => startDrag()}
               onBlur={(e) => {
-                const newHeightM = Number(e.target.value);
+                const newHeightCm = Number(e.target.value);
                 const currentSize = getObjectSize();
-                const currentWidthM = pxToM(currentSize.w);
-                const currentHeightM = pxToM(currentSize.h);
+                const currentWidthCm = pxToCm(currentSize.w);
+                const currentHeightCm = pxToCm(currentSize.h);
                 // 빈 값이거나 최소값 미만이면 현재 값으로 복원
-                if (isNaN(newHeightM) || newHeightM < MIN_HEIGHT_M) {
-                  setHeightInput(currentHeightM.toFixed(2));
+                if (isNaN(newHeightCm) || newHeightCm < MIN_HEIGHT_CM) {
+                  setHeightInput(currentHeightCm.toFixed(1));
                 } else {
-                  // 유효한 값이면 크기 변경 적용 (m 단위로 전달)
-                  handleSizeChange(currentWidthM, newHeightM);
+                  // 유효한 값이면 크기 변경 적용 (cm 단위로 전달)
+                  handleSizeChange(currentWidthCm, newHeightCm);
                 }
                 handleColorPickerEnd();
                 endDrag();

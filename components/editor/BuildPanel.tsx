@@ -48,7 +48,23 @@ export default function BuildPanel() {
               draggable={true}
             >
               <Image src="/images/room-s.svg" alt="square" width={32} height={32} />
-              <span className="text-xs font-medium text-gray-600">문</span>
+              <span className="text-xs font-medium text-gray-600">단일문</span>
+            </button>
+            <button 
+              className="flex items-center justify-center gap-2 flex-col"
+              onDragStart={(e) => handleDragStart(e, "double")}
+              draggable={true}
+            >
+              <Image src="/images/room-s.svg" alt="square" width={32} height={32} />
+              <span className="text-xs font-medium text-gray-600">양문</span>
+            </button>
+            <button 
+              className="flex items-center justify-center gap-2 flex-col"
+              onDragStart={(e) => handleDragStart(e, "sliding")}
+              draggable={true}
+            >
+              <Image src="/images/room-s.svg" alt="square" width={32} height={32} />
+              <span className="text-xs font-medium text-gray-600">미닫이문</span>
             </button>
           </div>
         </div>

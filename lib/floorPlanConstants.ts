@@ -1,8 +1,8 @@
 // 도면 단위 설정 (floorplanner 기준: 905px = 19.94m)
 export const FLOOR_PLAN_CONFIG = {
   // 단위 변환: 1px = 1.5cm
-  PX_TO_CM: 1.5,
-  PX_TO_M: 0.015,
+  PX_TO_CM: 1.0,
+  PX_TO_M: 0.01,
   
   // 격자 크기 (px 단위)
   GRID_SIZE_SMALL: 10,   
@@ -14,9 +14,6 @@ export const FLOOR_PLAN_CONFIG = {
   // 최소 크기 (px 단위)
   MIN_WIDTH: 50,        
   MIN_HEIGHT: 50,       
-  
-  // 기본 방 크기 (px 단위)
-  DEFAULT_ROOM_SIZE: 200, 
 };
 
 // px를 cm로 변환

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { FloorObject, Point, RoomPreset, DoorPreset, useEditorStore } from '@/store/useEditorSotre';
-import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
+import { FLOOR_PLAN_CONFIG, pxToCm, cmToPx } from '@/lib/floorPlanConstants';
 
 // 변 드래그할 때 필요한 정보 담아두려고 만든 인터페이스
 interface DraggingEdge {
@@ -254,7 +254,8 @@ export default function Canvas() {
       }
 
       const wallLength = distance(nearestWall.edge.p1, nearestWall.edge.p2);
-      const doorWidth = presetType === 'single' ? 80 : presetType === 'double' ? 160 : 120;
+      // 문 크기 (cm 단위 → px 변환): 단일문 90cm, 양문 160cm, 미닫이문 180cm
+      const doorWidth = presetType === 'single' ? cmToPx(90) : presetType === 'double' ? cmToPx(160) : cmToPx(180);
       const doorHeight = DRAG_SIZE_OFFSET;
       
       // 벽의 각도 계산
@@ -977,13 +978,13 @@ export default function Canvas() {
         
         {[...objects]
           .map((obj, index) => ({ obj, index })) // 원래 인덱스 저장
-          .sort((a, b) => {
-            // 선택한 오브젝트를 가장 위에 렌더링 (svg에서는 z-index가 안돼서 태그 순서로 처리)
-            if (a.obj.id === selectedObject?.id) return 1;
-            if (b.obj.id === selectedObject?.id) return -1;
-            // 나머지는 원래 배열 순서 유지
-            return a.index - b.index;
-          })
+          // .sort((a, b) => {
+          //   // 선택한 오브젝트를 가장 위에 렌더링 (svg에서는 z-index가 안돼서 태그 순서로 처리)
+          //   if (a.obj.id === selectedObject?.id) return 1;
+          //   if (b.obj.id === selectedObject?.id) return -1;
+          //   // 나머지는 원래 배열 순서 유지
+          //   return a.index - b.index;
+          // })
           .map(({ obj }) => {
           // 문인 경우 rotation 적용
           const center = getObjectCenter(obj.points);
@@ -1010,49 +1011,48 @@ export default function Canvas() {
             
             {/* 문 열리는 영역 표시 */}
             {obj.type === 'door' && (() => {
+              // 미닫이문은 호 없음
+              if (obj.name === '미닫이문') return null;
+              
               // points에서 문의 실제 크기와 위치 계산
               const xs = obj.points.map(p => p.x);
               const ys = obj.points.map(p => p.y);
               const minX = Math.min(...xs);
               const minY = Math.min(...ys);
-              const doorWidth = Math.max(...xs) - minX;
+              const totalDoorWidth = Math.max(...xs) - minX;
               
-              if (doorWidth <= 0) return null;
+              if (totalDoorWidth <= 0) return null;
               
               const doorOpenDirection = obj.doorOpenDirection ?? 1;
+              const isDoubleDoor = obj.name === '양문';
               
-              // 힌지 위치 (문의 왼쪽 상단, points의 실제 시작점)
-              const pivotX = minX;
-              const pivotY = minY;
-              
-              // 문의 로컬 좌표계에서 호를 그림 (transform의 rotation이 자동 적용됨)
-              // - 문은 X+ 방향으로 뻗어있음 (시작 각도 = 0)
-              // - doorOpenDirection=1: Y+ 방향 (아래로, 90도) → 방 안으로
-              // - doorOpenDirection=-1: Y- 방향 (위로, -90도) → 방 밖으로
-              
-              const startAngleRad = 0; // 문이 닫힌 상태 (X+ 방향)
-              const openAngleRad = (90 * Math.PI) / 180;
-              const endAngleRad = doorOpenDirection > 0 ? openAngleRad : -openAngleRad;
-              
-              // 호의 시작점 (문 끝점)
-              const startX = pivotX + doorWidth; // cos(0) = 1
-              const startY = pivotY;              // sin(0) = 0
-              
-              // 호의 끝점 (문이 열린 상태)
-              const endX = pivotX + doorWidth * Math.cos(endAngleRad);
-              const endY = pivotY + doorWidth * Math.sin(endAngleRad);
+              // 양문은 반쪽 너비, 단일문은 전체 너비
+              const doorWidth = isDoubleDoor ? totalDoorWidth / 2 : totalDoorWidth;
               
               // large-arc-flag: 90도는 항상 0
               const largeArcFlag = 0;
-              // sweep-flag: 시계방향(1), 반시계방향(0)
-              const sweepFlag = doorOpenDirection > 0 ? 1 : 0;
+              const openAngleRad = (90 * Math.PI) / 180;
               
-              // 호 경로: 힌지 → 문 끝점 → 호 → 힌지
-              const arcPath = `M ${pivotX} ${pivotY} L ${startX} ${startY} A ${doorWidth} ${doorWidth} 0 ${largeArcFlag} ${sweepFlag} ${endX} ${endY} Z`;
+              // 단일문: 왼쪽 힌지에서 오른쪽으로 열림
+              // 양문: 양쪽 힌지에서 각각 열림
               
-              return (
+              const paths: React.ReactElement[] = [];
+              
+              // 왼쪽 호 (단일문 또는 양문의 왼쪽 문)
+              const leftPivotX = minX;
+              const leftPivotY = minY;
+              const leftEndAngleRad = doorOpenDirection > 0 ? openAngleRad : -openAngleRad;
+              const leftStartX = leftPivotX + doorWidth;
+              const leftStartY = leftPivotY;
+              const leftEndX = leftPivotX + doorWidth * Math.cos(leftEndAngleRad);
+              const leftEndY = leftPivotY + doorWidth * Math.sin(leftEndAngleRad);
+              const leftSweepFlag = doorOpenDirection > 0 ? 1 : 0;
+              const leftArcPath = `M ${leftPivotX} ${leftPivotY} L ${leftStartX} ${leftStartY} A ${doorWidth} ${doorWidth} 0 ${largeArcFlag} ${leftSweepFlag} ${leftEndX} ${leftEndY} Z`;
+              
+              paths.push(
                 <path
-                  d={arcPath}
+                  key="left-arc"
+                  d={leftArcPath}
                   fill="rgba(255, 255, 255, 1)"
                   stroke="rgba(0, 0, 0, 1)"
                   strokeWidth="1.5"
@@ -1060,6 +1060,35 @@ export default function Canvas() {
                   opacity="0.6"
                 />
               );
+              
+              // 양문인 경우 오른쪽 호 추가
+              if (isDoubleDoor) {
+                const rightPivotX = minX + totalDoorWidth; // 오른쪽 끝이 힌지
+                const rightPivotY = minY;
+                // 오른쪽 문은 왼쪽 문과 반대 방향으로 열림 (거울 대칭)
+                const rightEndAngleRad = doorOpenDirection > 0 ? Math.PI - openAngleRad : Math.PI + openAngleRad;
+                const rightStartX = rightPivotX - doorWidth; // 왼쪽 방향으로 문이 뻗어있음
+                const rightStartY = rightPivotY;
+                const rightEndX = rightPivotX + doorWidth * Math.cos(rightEndAngleRad);
+                const rightEndY = rightPivotY + doorWidth * Math.sin(rightEndAngleRad);
+                // 오른쪽은 반대 방향
+                const rightSweepFlag = doorOpenDirection > 0 ? 0 : 1;
+                const rightArcPath = `M ${rightPivotX} ${rightPivotY} L ${rightStartX} ${rightStartY} A ${doorWidth} ${doorWidth} 0 ${largeArcFlag} ${rightSweepFlag} ${rightEndX} ${rightEndY} Z`;
+                
+                paths.push(
+                  <path
+                    key="right-arc"
+                    d={rightArcPath}
+                    fill="rgba(255, 255, 255, 1)"
+                    stroke="rgba(0, 0, 0, 1)"
+                    strokeWidth="1.5"
+                    strokeDasharray="3,3"
+                    opacity="0.6"
+                  />
+                );
+              }
+              
+              return <>{paths}</>;
             })()}
             
             {/* 
