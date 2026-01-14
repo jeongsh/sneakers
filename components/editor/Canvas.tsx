@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react'
-import { FloorObject, RoomPreset, useEditorStore } from '@/store/useEditorSotre';
+import { FloorObject, RoomPreset, DoorPreset, useEditorStore } from '@/store/useEditorSotre';
 import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
 
 // 변 드래그할 때 필요한 정보 담아두려고 만든 인터페이스
@@ -13,7 +13,7 @@ interface DraggingEdge {
 }
 
 export default function Canvas() {
-  const { objects, selectedObject, addRoom, setObjects, setSelectedObject, startDrag, endDrag } = useEditorStore();
+  const { objects, selectedObject, addRoom, addDoor, setObjects, setSelectedObject, startDrag, endDrag } = useEditorStore();
   const containerRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   
@@ -39,6 +39,7 @@ export default function Canvas() {
   const EDGE_SNAP_SIZE = DRAG_SIZE_OFFSET; // 변 드래그할 때 스냅되는 크기
   const MIN_WIDTH = FLOOR_PLAN_CONFIG.MIN_WIDTH;  // 오브젝트 최소 너비 (50px = 1.1m)
   const MIN_HEIGHT = FLOOR_PLAN_CONFIG.MIN_HEIGHT;  // 오브젝트 최소 높이 (50px = 1.1m)
+  const SNAP_THRESHOLD = 10; // 벽 찾기 임계값 (px)
 
   const [viewBox, setViewBox] = useState({
     x: 0,
@@ -115,6 +116,113 @@ export default function Canvas() {
     };
   };
 
+  // 두 점 사이의 거리 계산
+  const distance = (p1: { x: number, y: number }, p2: { x: number, y: number }) => {
+    return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+  };
+
+  // 점에서 선분까지의 최단 거리 계산
+  const pointToLineDistance = (point: { x: number, y: number }, line: { p1: { x: number, y: number }, p2: { x: number, y: number } }) => {
+    const { p1, p2 } = line;
+    const A = point.x - p1.x;
+    const B = point.y - p1.y;
+    const C = p2.x - p1.x;
+    const D = p2.y - p1.y;
+
+    const dot = A * C + B * D;
+    const lenSq = C * C + D * D;
+    let param = -1;
+    if (lenSq !== 0) param = dot / lenSq;
+
+    let xx, yy;
+
+    if (param < 0) {
+      xx = p1.x;
+      yy = p1.y;
+    } else if (param > 1) {
+      xx = p2.x;
+      yy = p2.y;
+    } else {
+      xx = p1.x + param * C;
+      yy = p1.y + param * D;
+    }
+
+    const dx = point.x - xx;
+    const dy = point.y - yy;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  // 가장 가까운 벽(edge) 찾기
+  type NearestWall = {
+    obj: FloorObject;
+    edgeIndex: number;
+    edge: { p1: { x: number, y: number }, p2: { x: number, y: number } };
+    distance: number;
+  };
+
+  const findNearestWall = (point: { x: number, y: number }, maxDistance?: number): NearestWall | null => {
+    let nearestWall: NearestWall | null = null;
+    let minDistance = Infinity;
+
+    objects.forEach(obj => {
+      if (obj.type !== 'room') return; // 방만 벽으로 인식
+
+      // room의 중심점 계산
+      const roomCenter = getObjectCenter(obj.points);
+      const roomCenterX = obj.x + roomCenter.x;
+      const roomCenterY = obj.y + roomCenter.y;
+
+      for (let i = 0; i < obj.points.length; i++) {
+        const p1 = { x: obj.x + obj.points[i].x, y: obj.y + obj.points[i].y };
+        const p2 = { x: obj.x + obj.points[(i + 1) % obj.points.length].x, y: obj.y + obj.points[(i + 1) % obj.points.length].y };
+        const edge = { p1, p2 };
+        const dist = pointToLineDistance(point, edge);
+
+        // 거리 제한이 있으면 체크
+        if (maxDistance !== undefined && dist > maxDistance) continue;
+
+        // 4분할: 드롭 위치가 room 중심점 기준으로 어느 사분면에 있는지 확인
+        // 해당 사분면의 벽만 고려
+        const dx = point.x - roomCenterX;
+        const dy = point.y - roomCenterY;
+        
+        // 벽의 중점 계산
+        const edgeCenterX = (p1.x + p2.x) / 2;
+        const edgeCenterY = (p1.y + p2.y) / 2;
+        const edgeDx = edgeCenterX - roomCenterX;
+        const edgeDy = edgeCenterY - roomCenterY;
+
+        // 같은 사분면인지 확인 (부호가 같으면 같은 사분면)
+        const sameQuadrant = 
+          (dx >= 0 && edgeDx >= 0) || (dx < 0 && edgeDx < 0) || // X축 같은 방향
+          (dy >= 0 && edgeDy >= 0) || (dy < 0 && edgeDy < 0);   // Y축 같은 방향
+
+        // 더 정확한 사분면 체크: 벡터의 내적을 사용
+        const pointDir = { x: dx, y: dy };
+        const edgeDir = { x: edgeDx, y: edgeDy };
+        const dotProduct = pointDir.x * edgeDir.x + pointDir.y * edgeDir.y;
+        
+        // 같은 방향이면 (내적이 양수) 같은 사분면
+        if (dotProduct < 0) continue; // 반대 방향이면 스킵
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestWall = { obj, edgeIndex: i, edge, distance: dist };
+        }
+      }
+    });
+
+    return nearestWall;
+  };
+
+  // 벽 위의 점을 벽의 시작점 기준으로 정규화 (0~1 사이 값)
+  const getPositionOnWall = (point: { x: number, y: number }, wall: { p1: { x: number, y: number }, p2: { x: number, y: number } }) => {
+    const { p1, p2 } = wall;
+    const wallLength = distance(p1, p2);
+    const pointToP1 = distance(point, p1);
+    return pointToP1 / wallLength;
+  };
+
   // 오브젝트 드래그 시 커서모양 변경
   const handleObjectDragOver = (e: React.DragEvent) => {
     e.preventDefault(); // 드롭을 허용하기 위해 필수
@@ -124,17 +232,60 @@ export default function Canvas() {
   // 오브젝트 드래그 시 드롭 이벤트 처리
   const handleObjectDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const preset = e.dataTransfer.getData("presetType") as RoomPreset;
-    if (!preset || !svgRef.current) return;
+    const presetType = e.dataTransfer.getData("presetType");
+    if (!presetType || !svgRef.current) return;
 
     // SVG viewBox 좌표계로 변환
     const { x: svgX, y: svgY } = clientToSvg(e.clientX, e.clientY);
+    const dropPoint = { x: svgX, y: svgY };
 
+    // 문인 경우 모든 곳에 생성 가능 (가장 가까운 벽에 생성)
+    if (presetType === 'single' || presetType === 'double' || presetType === 'sliding') {
+      // 거리 제한 없이 가장 가까운 벽 찾기 (4분할 적용)
+      const nearestWall = findNearestWall(dropPoint);
+      
+      if (!nearestWall) {
+        // 벽을 찾지 못하면 생성하지 않음
+        return;
+      }
+
+      const wallLength = distance(nearestWall.edge.p1, nearestWall.edge.p2);
+      const doorWidth = presetType === 'single' ? 80 : presetType === 'double' ? 160 : 120;
+      const doorHeight = DRAG_SIZE_OFFSET;
+      
+      // 벽의 각도 계산
+      const wallAngle = Math.atan2(
+        nearestWall.edge.p2.y - nearestWall.edge.p1.y,
+        nearestWall.edge.p2.x - nearestWall.edge.p1.x
+      ) * (180 / Math.PI);
+      
+      // 문을 벽의 가운데에 배치 (문의 중심점 기준)
+      const halfDoorWidth = doorWidth / 2;
+      const minPosition = halfDoorWidth / wallLength;
+      const maxPosition = 1 - (halfDoorWidth / wallLength);
+      // 벽의 가운데 위치 (0.5), 단 문이 벽을 벗어나지 않도록 제한
+      const centerPosition = 0.5;
+      const clampedPosition = Math.max(minPosition, Math.min(maxPosition, centerPosition));
+      
+      // 벽의 가운데 위치 계산
+      const finalCenterX = nearestWall.edge.p1.x + (nearestWall.edge.p2.x - nearestWall.edge.p1.x) * clampedPosition;
+      const finalCenterY = nearestWall.edge.p1.y + (nearestWall.edge.p2.y - nearestWall.edge.p1.y) * clampedPosition;
+      
+      // 문의 기준점 (0, 0)을 벽의 edge 위에 직접 배치
+      // 문의 points는 { x: 0, y: 0 }부터 시작하므로, 기준점을 벽의 edge 위에 두면 됨
+      const doorBaseX = finalCenterX - (doorWidth / 2);
+      const doorBaseY = finalCenterY; // 벽의 edge 위에 직접 배치
+
+      addDoor(presetType as DoorPreset, doorBaseX, doorBaseY, nearestWall.obj.id, wallAngle);
+      return;
+    }
+
+    // 방인 경우 기존 로직
+    const preset = presetType as RoomPreset;
     // 격자 스냅 적용
     const snappedX = Math.round(svgX / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
     const snappedY = Math.round(svgY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
 
-    // 해당 위치에 방 생성 (TODO: 다른 타입도 지원 필요)
     addRoom(preset, snappedX, snappedY);
   };
 
@@ -255,6 +406,62 @@ export default function Canvas() {
     // 오브젝트 드래그 처리
     if (!draggingObjectRef.current || e.buttons !== 1) return;
 
+    const draggingObj = draggingObjectRef.current;
+
+    // 문인 경우 벽을 따라 이동 (room 밖으로 나가지 않도록 제한)
+    if (draggingObj.type === 'door' && draggingObj.attachedTo) {
+      const attachedRoom = objects.find(obj => obj.id === draggingObj.attachedTo);
+      if (!attachedRoom) return;
+
+      // 드래그 중인 문의 중심점
+      const doorCenter = { x: svgPos.x, y: svgPos.y };
+      
+      // 부착된 방의 벽 중 가장 가까운 벽 찾기
+      const nearestWall = findNearestWall(doorCenter);
+      
+      // room의 벽 위에만 이동 가능 (room 밖으로 나가지 않도록)
+      if (nearestWall && nearestWall.obj.id === attachedRoom.id) {
+        // 벽 위의 위치 계산
+        const positionOnWall = getPositionOnWall(doorCenter, nearestWall.edge);
+        const wallLength = distance(nearestWall.edge.p1, nearestWall.edge.p2);
+        const doorWidth = draggingObj.width || 80;
+        const doorHeight = DRAG_SIZE_OFFSET;
+        
+        // 벽의 각도 계산
+        const wallAngle = Math.atan2(
+          nearestWall.edge.p2.y - nearestWall.edge.p1.y,
+          nearestWall.edge.p2.x - nearestWall.edge.p1.x
+        ) * (180 / Math.PI);
+        
+        // 문이 벽을 벗어나지 않도록 제한 (문의 중심점 기준)
+        // 문이 room 밖으로 나가지 않도록 벽의 시작점과 끝점 내에서만 이동 가능
+        const halfDoorWidth = doorWidth / 2;
+        const minPosition = halfDoorWidth / wallLength;
+        const maxPosition = 1 - (halfDoorWidth / wallLength);
+        const clampedPosition = Math.max(minPosition, Math.min(maxPosition, positionOnWall));
+        
+        // 벽의 가운데 위치 계산
+        const finalCenterX = nearestWall.edge.p1.x + (nearestWall.edge.p2.x - nearestWall.edge.p1.x) * clampedPosition;
+        const finalCenterY = nearestWall.edge.p1.y + (nearestWall.edge.p2.y - nearestWall.edge.p1.y) * clampedPosition;
+        
+        // 문의 기준점 (0, 0)을 벽의 edge 위에 직접 배치
+        // 문의 points는 { x: 0, y: 0 }부터 시작하므로, 기준점을 벽의 edge 위에 두면 됨
+        const doorBaseX = finalCenterX - (doorWidth / 2);
+        const doorBaseY = finalCenterY; // 벽의 edge 위에 직접 배치
+
+        setObjects(objects.map(obj => 
+          obj.id === draggingObj.id 
+            ? { ...obj, x: doorBaseX, y: doorBaseY, rotation: wallAngle } 
+            : obj
+        ));
+        setSelectedObject({ ...draggingObj, x: doorBaseX, y: doorBaseY, rotation: wallAngle });
+        setIsDragging(true);
+        return;
+      }
+      // room의 벽 위가 아니면 이동하지 않음 (room 밖으로 나가지 않도록)
+    }
+
+    // 일반 오브젝트 드래그 처리
     // 새 위치 계산 (클릭 오프셋 반영)
     let newX = svgPos.x - dragStartPosRef.current.x;
     let newY = svgPos.y - dragStartPosRef.current.y;
@@ -278,11 +485,11 @@ export default function Canvas() {
     const snappedY = Math.round(newY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
     
     setObjects(objects.map(obj => 
-      obj.id === draggingObjectRef.current!.id 
+      obj.id === draggingObj.id 
         ? { ...obj, x: snappedX, y: snappedY } 
         : obj
     ));
-    setSelectedObject({ ...draggingObjectRef.current!, x: snappedX, y: snappedY });
+    setSelectedObject({ ...draggingObj, x: snappedX, y: snappedY });
     setIsDragging(true);
   };
 
@@ -396,6 +603,7 @@ export default function Canvas() {
       
       if (e.key === 'Delete') {
         // state로 하니까 클로져 때문에 또 안됨, zustand에 스테이트 값이 있어서 스테이트 값을 zustand에서 가져오기
+        console.log(selectedObject);
         if (selectedObject) {
           setObjects(objects.filter(obj => obj.id !== selectedObject.id));
           setSelectedObject(null);
@@ -405,6 +613,7 @@ export default function Canvas() {
       
       // 방향키 입력시 오브젝트 DRAG_SIZE_OFFSET만큼 이동
       if (!selectedObject) return; // 선택된 오브젝트가 없으면 무시
+      if(selectedObject.type === 'door') return;
       
       if (e.key === 'ArrowUp') {
         e.preventDefault(); 
@@ -526,21 +735,28 @@ export default function Canvas() {
           if (a.id === selectedObject?.id) return 1;
           if (b.id === selectedObject?.id) return -1;
           return 0;
-        }).map((obj) => (
-          // rotate(${obj.rotation ?? 0}, ${getObjectCenter(obj.points).x}, ${getObjectCenter(obj.points).y})
-          <g 
-            id={obj.id}
-            key={obj.id} 
-            transform={`translate(${obj.x}, ${obj.y})`} 
-            onMouseDown={(e) => handleObjectMouseDown(e, obj)}
-            style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
-          >
+        }).map((obj) => {
+          // 문인 경우 rotation 적용
+          const center = getObjectCenter(obj.points);
+          const rotation = obj.rotation ?? 0;
+          const transform = rotation !== 0 
+            ? `translate(${obj.x}, ${obj.y}) rotate(${rotation}, ${center.x}, ${center.y})`
+            : `translate(${obj.x}, ${obj.y})`;
+          
+          return (
+            <g 
+              id={obj.id}
+              key={obj.id} 
+              transform={transform}
+              onMouseDown={(e) => handleObjectMouseDown(e, obj)}
+              style={{ cursor: isDragging ? 'grabbing' : 'pointer' }}
+            >
             {/* 오브젝트 본체 그리는 polygon */}
             <polygon
               points={obj.points.map(p => `${p.x},${p.y}`).join(' ')}
               fill={obj.color}
               stroke={selectedObject?.id === obj.id ? getActiveBorderColor(obj.borderColor) : obj.borderColor}
-              strokeWidth={pxToCm(5)}
+              strokeWidth={ obj.type === 'door' ? 0 : pxToCm(5)}
             />
             
             {/* 
@@ -571,8 +787,8 @@ export default function Canvas() {
               );
             })}
             
-            {/* 오브젝트 좌상단 기준 (20, 20) 위치에 텍스트 배치 */}
-            {(() => {
+            {/* 오브젝트 좌상단 기준 (20, 20) 위치에 텍스트 배치 (문 제외) */}
+            {obj.type !== 'door' && (() => {
               const topLeft = getObjectTopLeft(obj.points);
               return (
                 <text 
@@ -585,8 +801,9 @@ export default function Canvas() {
                 </text>
               );
             })()}
-          </g>
-        ))}
+            </g>
+          );
+        })}
       </svg>
     </div>
   )

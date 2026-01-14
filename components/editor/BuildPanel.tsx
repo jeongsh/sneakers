@@ -42,9 +42,13 @@ export default function BuildPanel() {
         <div className="mb-6">
           <p className="text-sm font-medium mb-4">문 그리기</p>
           <div className="grid grid-cols-3 gap-2">
-            <button className="flex items-center justify-center gap-2 flex-col">
+            <button 
+              className="flex items-center justify-center gap-2 flex-col"
+              onDragStart={(e) => handleDragStart(e, "single")}
+              draggable={true}
+            >
               <Image src="/images/room-s.svg" alt="square" width={32} height={32} />
-              <span className="text-xs font-medium text-gray-600">사각형</span>
+              <span className="text-xs font-medium text-gray-600">문</span>
             </button>
           </div>
         </div>

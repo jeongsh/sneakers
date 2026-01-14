@@ -37,27 +37,6 @@ export default function InfoPanel() {
   // 입력 중인 크기 값을 관리하는 로컬 state (m 단위)
   const [widthInput, setWidthInput] = useState<string>(pxToM(size.w).toFixed(2));
   const [heightInput, setHeightInput] = useState<string>(pxToM(size.h).toFixed(2));
-
-  const handleClickRotation = () => {
-    if (!selectedObject) return;
-    const currentRotation = selectedObject?.rotation ?? 0;
-    let newRotation: 0 | 90 | 180 | 270;
-    switch (currentRotation) {
-      case 0:
-        newRotation = 90;
-        break;
-      case 90:
-        newRotation = 180;
-        break;
-      case 180:
-        newRotation = 270;
-        break;
-      case 270:
-        newRotation = 0;
-        break;
-    }
-    changeObjectInfo('rotation', newRotation);
-  };
   
   // selectedObject가 변경되면 입력값도 업데이트
   useEffect(() => {
@@ -215,7 +194,7 @@ export default function InfoPanel() {
       </div>
 
       {/* 회전 섹션 */}
-      { selectedObject?.type !== 'room' && (
+      {/* { selectedObject?.type !== 'room' && (
         <div className="px-4 py-3 border-b border-gray-100">
           <h5 className="text-xs text-gray-500 mb-2">회전</h5>
           <div className="flex gap-2">
@@ -236,7 +215,7 @@ export default function InfoPanel() {
             </Button>
           </div>
         </div>
-      )}
+      )} */}
 
       {/* 크기 섹션 */}
       <div className="px-4 py-3 border-b border-gray-100">
@@ -283,6 +262,7 @@ export default function InfoPanel() {
               value={heightInput}
               min={MIN_HEIGHT_M}
               step="0.1"
+              readOnly={selectedObject?.type !== 'room'}
               onChange={(e) => {
                 setHeightInput(e.target.value); // 입력 중인 값만 업데이트
               }}

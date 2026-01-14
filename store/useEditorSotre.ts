@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { FLOOR_PLAN_CONFIG } from '@/lib/floorPlanConstants';
+import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
 
 export interface Point {
   x: number;
@@ -26,7 +26,7 @@ export interface FloorObject {
   color: string;
   borderColor: string;
   textColor?: string; // 텍스트 색상
-  rotation?: 0 | 90 | 180 | 270;  // 회전 각도 (문, 창문용)
+  rotation?: number;  // 회전 각도 (문, 창문용)
   width?: number;     // 너비 (문, 창문용)
   height?: number;    // 높이 (창문용)
   attachedTo?: string; // 부착된 오브젝트 ID (문, 창문이 벽에 붙을 때)
@@ -43,7 +43,7 @@ interface EditorState {
   setSelectedObject: (object: FloorObject | null) => void;
   setObjects: (objects: FloorObject[]) => void;
   addRoom: (preset: RoomPreset, x: number, y: number) => void;
-  addDoor: (preset: DoorPreset, x: number, y: number) => void;
+  addDoor: (preset: DoorPreset, x: number, y: number, attachedTo?: string, rotation?: number) => void;
   addWindow: (preset: WindowPreset, x: number, y: number) => void;
   addFurniture: (preset: FurniturePreset, x: number, y: number) => void;
   changeObjectInfo: (key: keyof FloorObject, value: string | number | Point[]) => void;
@@ -201,17 +201,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // 문 추가
-  addDoor: (preset, x, y) => {
+  addDoor: (preset, x, y, attachedTo?: string, rotation?: number) => {
     const id = crypto.randomUUID();
     let points: Point[] = [];
     let name = '';
     let width = 0;
+    const doorHeight = pxToCm(FLOOR_PLAN_CONFIG.DRAG_SIZE_OFFSET); // 문 높이를 DRAG_SIZE_OFFSET로 설정
 
     switch (preset) {
       case 'single':
         points = [
           { x: 0, y: 0 }, { x: 80, y: 0 }, 
-          { x: 80, y: 10 }, { x: 0, y: 10 }
+          { x: 80, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '단일문';
         width = 80;
@@ -219,7 +220,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       case 'double':
         points = [
           { x: 0, y: 0 }, { x: 160, y: 0 }, 
-          { x: 160, y: 10 }, { x: 0, y: 10 }
+          { x: 160, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '양문';
         width = 160;
@@ -227,7 +228,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       case 'sliding':
         points = [
           { x: 0, y: 0 }, { x: 120, y: 0 }, 
-          { x: 120, y: 10 }, { x: 0, y: 10 }
+          { x: 120, y: doorHeight }, { x: 0, y: doorHeight }
         ];
         name = '미닫이문';
         width = 120;
@@ -241,11 +242,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       x,
       y,
       points,
-      color: '#BC916B',
+      color: '#fff',
       width,
-      rotation: 0,
+      rotation: rotation ?? 0,
       borderColor: '#fff',
       textColor: '#000000',
+      attachedTo: attachedTo,
     };
 
     set((state) => ({ objects: [...state.objects, newObject] }));
