@@ -106,6 +106,97 @@ export default function Canvas() {
     return `#${toHex(newR)}${toHex(newG)}${toHex(newB)}`;
   };
 
+  // room의 바운딩 박스 계산 (global coordinates)
+  const getRoomBoundingBox = (room: FloorObject) => {
+    const xs = room.points.map(p => room.x + p.x);
+    const ys = room.points.map(p => room.y + p.y);
+    return {
+      minX: Math.min(...xs),
+      minY: Math.min(...ys),
+      maxX: Math.max(...xs),
+      maxY: Math.max(...ys),
+    };
+  };
+
+  // 두 바운딩 박스의 겹침 영역 계산
+  const getOverlap = (
+    box1: { minX: number; minY: number; maxX: number; maxY: number },
+    box2: { minX: number; minY: number; maxX: number; maxY: number }
+  ) => {
+    const overlapX = Math.max(0, Math.min(box1.maxX, box2.maxX) - Math.max(box1.minX, box2.minX));
+    const overlapY = Math.max(0, Math.min(box1.maxY, box2.maxY) - Math.max(box1.minY, box2.minY));
+    return { overlapX, overlapY };
+  };
+
+  // room 충돌 감지 및 위치 조정 (벽 두께만큼만 겹침 허용)
+  const adjustRoomPositionForCollision = (
+    draggingRoom: FloorObject,
+    newX: number,
+    newY: number,
+    otherRooms: FloorObject[]
+  ): { x: number; y: number } => {
+    const WALL_THICKNESS = 0; // 벽이 완전히 겹치도록 (0이면 정확히 맞닿음)
+    
+    // 드래그 중인 room의 새 바운딩 박스 계산
+    const draggedBox = {
+      minX: newX + Math.min(...draggingRoom.points.map(p => p.x)),
+      minY: newY + Math.min(...draggingRoom.points.map(p => p.y)),
+      maxX: newX + Math.max(...draggingRoom.points.map(p => p.x)),
+      maxY: newY + Math.max(...draggingRoom.points.map(p => p.y)),
+    };
+
+    let adjustedX = newX;
+    let adjustedY = newY;
+
+    for (const otherRoom of otherRooms) {
+      if (otherRoom.id === draggingRoom.id || otherRoom.type !== 'room') continue;
+
+      const otherBox = getRoomBoundingBox(otherRoom);
+      const { overlapX, overlapY } = getOverlap(draggedBox, otherBox);
+
+      // 겹침이 벽 두께를 초과하는 경우에만 조정
+      if (overlapX > WALL_THICKNESS && overlapY > WALL_THICKNESS) {
+        // 어느 방향으로 밀어낼지 결정 (더 적게 이동하는 방향)
+        const pushLeftRight = overlapX - WALL_THICKNESS;
+        const pushUpDown = overlapY - WALL_THICKNESS;
+
+        if (pushLeftRight <= pushUpDown) {
+          // 좌우로 밀어내기
+          const draggedCenterX = (draggedBox.minX + draggedBox.maxX) / 2;
+          const otherCenterX = (otherBox.minX + otherBox.maxX) / 2;
+          
+          if (draggedCenterX < otherCenterX) {
+            // 왼쪽으로 밀기
+            adjustedX -= pushLeftRight;
+          } else {
+            // 오른쪽으로 밀기
+            adjustedX += pushLeftRight;
+          }
+        } else {
+          // 상하로 밀어내기
+          const draggedCenterY = (draggedBox.minY + draggedBox.maxY) / 2;
+          const otherCenterY = (otherBox.minY + otherBox.maxY) / 2;
+          
+          if (draggedCenterY < otherCenterY) {
+            // 위로 밀기
+            adjustedY -= pushUpDown;
+          } else {
+            // 아래로 밀기
+            adjustedY += pushUpDown;
+          }
+        }
+
+        // 조정된 위치로 바운딩 박스 업데이트
+        draggedBox.minX = adjustedX + Math.min(...draggingRoom.points.map(p => p.x));
+        draggedBox.minY = adjustedY + Math.min(...draggingRoom.points.map(p => p.y));
+        draggedBox.maxX = adjustedX + Math.max(...draggingRoom.points.map(p => p.x));
+        draggedBox.maxY = adjustedY + Math.max(...draggingRoom.points.map(p => p.y));
+      }
+    }
+
+    return { x: adjustedX, y: adjustedY };
+  };
+
   // 마우스 좌표 > SVG 좌표 변환 함수
   const clientToSvg = (clientX: number, clientY: number) => {
     if (!svgRef.current) return { x: 0, y: 0 };
@@ -593,8 +684,16 @@ export default function Canvas() {
     }
     
     // 격자 스냅
-    const snappedX = Math.round(newX / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
-    const snappedY = Math.round(newY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
+    let snappedX = Math.round(newX / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
+    let snappedY = Math.round(newY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
+    
+    // room인 경우 다른 room과의 충돌 감지 및 위치 조정
+    if (draggingObj.type === 'room') {
+      const otherRooms = objects.filter(obj => obj.type === 'room' && obj.id !== draggingObj.id);
+      const adjusted = adjustRoomPositionForCollision(draggingObj, snappedX, snappedY, otherRooms);
+      snappedX = adjusted.x;
+      snappedY = adjusted.y;
+    }
     
     // room 이동 시 부착된 문들의 위치도 함께 업데이트
     let updatedObjects = objects.map(obj => 
