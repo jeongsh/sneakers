@@ -30,6 +30,9 @@ export interface FloorObject {
   width?: number;     // 너비 (문, 창문용)
   height?: number;    // 높이 (창문용)
   attachedTo?: string; // 부착된 오브젝트 ID (문, 창문이 벽에 붙을 때)
+  edgeIndex?: number; // 부착된 벽의 edge 인덱스 (문용)
+  positionOnWall?: number; // 벽 위의 위치 (0~1 사이의 비율, 문용)
+  doorOpenDirection?: number; // 문 열리는 방향 (1: 방 안으로, -1: 방 밖으로)
 }
 
 interface EditorState {
@@ -43,7 +46,7 @@ interface EditorState {
   setSelectedObject: (object: FloorObject | null) => void;
   setObjects: (objects: FloorObject[]) => void;
   addRoom: (preset: RoomPreset, x: number, y: number) => void;
-  addDoor: (preset: DoorPreset, x: number, y: number, attachedTo?: string, rotation?: number) => void;
+  addDoor: (preset: DoorPreset, x: number, y: number, attachedTo?: string, rotation?: number, edgeIndex?: number, positionOnWall?: number) => void;
   addWindow: (preset: WindowPreset, x: number, y: number) => void;
   addFurniture: (preset: FurniturePreset, x: number, y: number) => void;
   changeObjectInfo: (key: keyof FloorObject, value: string | number | Point[]) => void;
@@ -201,7 +204,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   // 문 추가
-  addDoor: (preset, x, y, attachedTo?: string, rotation?: number) => {
+  addDoor: (preset, x, y, attachedTo?: string, rotation?: number, edgeIndex?: number, positionOnWall?: number) => {
     const id = crypto.randomUUID();
     let points: Point[] = [];
     let name = '';
@@ -248,6 +251,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       borderColor: '#fff',
       textColor: '#000000',
       attachedTo: attachedTo,
+      edgeIndex: edgeIndex,
+      positionOnWall: positionOnWall,
+      doorOpenDirection: 1, // 기본값: 방 안으로 열림
     };
 
     set((state) => ({ objects: [...state.objects, newObject] }));

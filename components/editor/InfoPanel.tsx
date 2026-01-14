@@ -9,13 +9,13 @@ import { useEditorStore } from "@/store/useEditorSotre";
 import { useRef, useState, useEffect } from "react";
 import { FLOOR_PLAN_CONFIG, pxToM, mToPx } from "@/lib/floorPlanConstants";
 import { Button } from "../ui/button";
-import { RotateCwSquareIcon } from "lucide-react";
+import { RotateCwSquareIcon, ArrowUpToLine, ArrowDownToLine } from "lucide-react";
 
 const MIN_WIDTH_M = pxToM(FLOOR_PLAN_CONFIG.MIN_WIDTH);  // 오브젝트 최소 너비 (1.1m)
 const MIN_HEIGHT_M = pxToM(FLOOR_PLAN_CONFIG.MIN_HEIGHT);  // 오브젝트 최소 높이 (1.1m)
 
 export default function InfoPanel() {
-  const { selectedObject, changeObjectInfo, startDrag, endDrag } = useEditorStore();
+  const { selectedObject, objects, setObjects, changeObjectInfo, startDrag, endDrag } = useEditorStore();
   const colorChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const borderColorChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textColorChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -193,6 +193,45 @@ export default function InfoPanel() {
         </div>
       </div>
 
+      {/* 순서 섹션 (door 제외) */}
+      {selectedObject && selectedObject.type !== 'door' && (
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h5 className="text-xs text-gray-500 mb-2">순서</h5>
+          <div className="flex gap-2">
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="flex-1 text-xs"
+              onClick={() => {
+                // 맨 앞으로: 배열의 맨 뒤로 이동 (나중에 렌더링 = 위에 표시)
+                const newObjects = objects.filter(obj => obj.id !== selectedObject.id);
+                newObjects.push(selectedObject);
+                setObjects(newObjects);
+              }}
+              title="맨 앞으로"
+            >
+              <ArrowUpToLine className="w-3 h-3 mr-1" />
+              맨 앞
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="flex-1 text-xs"
+              onClick={() => {
+                // 맨 뒤로: 배열의 맨 앞으로 이동 (먼저 렌더링 = 아래에 표시)
+                const newObjects = objects.filter(obj => obj.id !== selectedObject.id);
+                newObjects.unshift(selectedObject);
+                setObjects(newObjects);
+              }}
+              title="맨 뒤로"
+            >
+              <ArrowDownToLine className="w-3 h-3 mr-1" />
+              맨 뒤
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* 회전 섹션 */}
       {/* { selectedObject?.type !== 'room' && (
         <div className="px-4 py-3 border-b border-gray-100">
@@ -216,6 +255,29 @@ export default function InfoPanel() {
           </div>
         </div>
       )} */}
+
+      {/* 문 열리는 방향 섹션 */}
+      {selectedObject?.type === 'door' && (
+        <div className="px-4 py-3 border-b border-gray-100">
+          <h5 className="text-xs text-gray-500 mb-2">문 열리는 방향</h5>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-600 flex-1">
+              현재: {selectedObject.doorOpenDirection === -1 ? '방 밖으로' : '방 안으로'}
+            </span>
+            <Button 
+              variant="outline" 
+              size="icon"
+              onClick={() => {
+                const currentDirection = selectedObject.doorOpenDirection ?? 1;
+                changeObjectInfo('doorOpenDirection', currentDirection * -1);
+              }}
+              title="열리는 방향 바꾸기"
+            >
+              <RotateCwSquareIcon className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* 크기 섹션 */}
       <div className="px-4 py-3 border-b border-gray-100">
@@ -354,37 +416,39 @@ export default function InfoPanel() {
       </div>
 
       {/* 텍스트 색상 섹션 */}
-      <div className="px-4 py-3">
-        <h5 className="text-xs text-gray-500 mb-2">텍스트</h5>
-        <div className="flex items-center gap-2">
-          <label 
-            htmlFor="textColor"
-            className="w-8 h-8 rounded-md border border-(--input) cursor-pointer p-1 relative"
-          >
-            <input 
-              type="color" 
-              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
-              value={selectedObject?.textColor ?? '#000000'}
-              onChange={(e) => handleColorChange(e.target.value, 'textColor')}
-              onMouseUp={handleColorPickerEnd}
-              onBlur={handleColorPickerEnd}
-              id="textColor"
+      {selectedObject?.type === 'room' && (
+        <div className="px-4 py-3">
+          <h5 className="text-xs text-gray-500 mb-2">텍스트</h5>
+          <div className="flex items-center gap-2">
+            <label 
+              htmlFor="textColor"
+              className="w-8 h-8 rounded-md border border-(--input) cursor-pointer p-1 relative"
+            >
+              <input 
+                type="color" 
+                className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                value={selectedObject?.textColor ?? '#000000'}
+                onChange={(e) => handleColorChange(e.target.value, 'textColor')}
+                onMouseUp={handleColorPickerEnd}
+                onBlur={handleColorPickerEnd}
+                id="textColor"
+              />
+              <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: selectedObject?.textColor ?? '#000000' }}></div>
+            </label>
+            <Input 
+              type="text" 
+              className="flex-1 h-8 text-xs uppercase"
+              value={selectedObject?.textColor?.replace('#', '') ?? '000000'}
+              onChange={(e) => handleColorChange(`#${e.target.value}`, 'textColor')}
+              onFocus={() => startDrag()}
+              onBlur={() => {
+                handleColorPickerEnd();
+                endDrag();
+              }}
             />
-            <div className="w-full h-full rounded-[3px]" style={{ backgroundColor: selectedObject?.textColor ?? '#000000' }}></div>
-          </label>
-          <Input 
-            type="text" 
-            className="flex-1 h-8 text-xs uppercase"
-            value={selectedObject?.textColor?.replace('#', '') ?? '000000'}
-            onChange={(e) => handleColorChange(`#${e.target.value}`, 'textColor')}
-            onFocus={() => startDrag()}
-            onBlur={() => {
-              handleColorPickerEnd();
-              endDrag();
-            }}
-          />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

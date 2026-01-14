@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react'
-import { FloorObject, RoomPreset, DoorPreset, useEditorStore } from '@/store/useEditorSotre';
+import { FloorObject, Point, RoomPreset, DoorPreset, useEditorStore } from '@/store/useEditorSotre';
 import { FLOOR_PLAN_CONFIG, pxToCm } from '@/lib/floorPlanConstants';
 
 // 변 드래그할 때 필요한 정보 담아두려고 만든 인터페이스
@@ -160,12 +160,16 @@ export default function Canvas() {
     distance: number;
   };
 
-  const findNearestWall = (point: { x: number, y: number }, maxDistance?: number): NearestWall | null => {
+  // roomId를 지정하면 해당 방의 벽만 검색, 없으면 모든 방 검색
+  const findNearestWall = (point: { x: number, y: number }, maxDistance?: number, roomId?: string): NearestWall | null => {
     let nearestWall: NearestWall | null = null;
     let minDistance = Infinity;
 
     objects.forEach(obj => {
       if (obj.type !== 'room') return; // 방만 벽으로 인식
+      
+      // roomId가 지정되었으면 해당 방만 검색
+      if (roomId && obj.id !== roomId) return;
 
       // room의 중심점 계산
       const roomCenter = getObjectCenter(obj.points);
@@ -274,9 +278,10 @@ export default function Canvas() {
       // 문의 기준점 (0, 0)을 벽의 edge 위에 직접 배치
       // 문의 points는 { x: 0, y: 0 }부터 시작하므로, 기준점을 벽의 edge 위에 두면 됨
       const doorBaseX = finalCenterX - (doorWidth / 2);
-      const doorBaseY = finalCenterY; // 벽의 edge 위에 직접 배치
+      const doorBaseY = finalCenterY - pxToCm(EDGE_SNAP_SIZE / 2); // 벽의 edge 위에서 1px 위에 배치
 
-      addDoor(presetType as DoorPreset, doorBaseX, doorBaseY, nearestWall.obj.id, wallAngle);
+      // 문의 상대적 위치 정보 저장 (room 이동 시 함께 이동하기 위해)
+      addDoor(presetType as DoorPreset, doorBaseX, doorBaseY, nearestWall.obj.id, wallAngle, nearestWall.edgeIndex, clampedPosition);
       return;
     }
 
@@ -382,14 +387,119 @@ export default function Canvas() {
       // 오브젝트 너비
     }
     
-    // store에 있는 objects 업데이트
-    setObjects(objects.map(o => 
+    // room 크기 조절 시 부착된 door들의 크기와 위치 조정
+    let updatedObjects = objects.map(o => 
       o.id === obj.id ? { ...o, points: newPoints } : o
-    ));
+    );
+    
+    // room인 경우, 부착된 door들 확인 및 조정
+    if (obj.type === 'room') {
+      const updatedRoom = updatedObjects.find(r => r.id === obj.id);
+      if (updatedRoom) {
+        // 해당 room에 부착된 모든 door 찾기
+        const attachedDoors = updatedObjects.filter(door => 
+          door.type === 'door' && door.attachedTo === updatedRoom.id && 
+          door.edgeIndex !== undefined && door.positionOnWall !== undefined
+        );
+        
+        // 각 door의 크기와 위치 조정
+        updatedObjects = updatedObjects.map(doorObj => {
+          if (doorObj.type === 'door' && doorObj.attachedTo === updatedRoom.id && 
+              doorObj.edgeIndex !== undefined && doorObj.positionOnWall !== undefined) {
+            // door가 부착된 edge의 길이 계산
+            const edgeIndex = doorObj.edgeIndex;
+            const p1 = { 
+              x: updatedRoom.x + updatedRoom.points[edgeIndex].x, 
+              y: updatedRoom.y + updatedRoom.points[edgeIndex].y 
+            };
+            const p2 = { 
+              x: updatedRoom.x + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].x, 
+              y: updatedRoom.y + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].y 
+            };
+            
+            const wallLength = distance(p1, p2);
+            const doorWidth = doorObj.width || 80;
+            
+            // door의 width가 edge 길이보다 크면 edge 길이로 줄임
+            if (doorWidth > wallLength) {
+              const newDoorWidth = wallLength;
+              const doorHeight = FLOOR_PLAN_CONFIG.DRAG_SIZE_OFFSET; // px 단위로 유지
+              
+              // door의 points 업데이트 (width만 변경)
+              const newDoorPoints: Point[] = [
+                { x: 0, y: 0 }, 
+                { x: newDoorWidth, y: 0 }, 
+                { x: newDoorWidth, y: doorHeight }, 
+                { x: 0, y: doorHeight }
+              ];
+              
+              // 벽의 각도 계산
+              const wallAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+              
+              // door의 positionOnWall을 벽 중앙으로 조정 (door가 벽 안에 있도록)
+              const halfDoorWidth = newDoorWidth / 2;
+              const minPosition = halfDoorWidth / wallLength;
+              const maxPosition = 1 - (halfDoorWidth / wallLength);
+              const clampedPosition = Math.max(minPosition, Math.min(maxPosition, 0.5)); // 중앙으로
+              
+              // 벽 위의 중심점 계산
+              const finalCenterX = p1.x + (p2.x - p1.x) * clampedPosition;
+              const finalCenterY = p1.y + (p2.y - p1.y) * clampedPosition;
+              
+              // 문의 기준점 계산
+              const doorBaseX = finalCenterX - (newDoorWidth / 2);
+              const doorBaseY = finalCenterY - 1; // 벽의 edge 위에서 1px 위에 배치
+              
+              return {
+                ...doorObj,
+                width: newDoorWidth,
+                points: newDoorPoints,
+                x: doorBaseX,
+                y: doorBaseY,
+                rotation: wallAngle,
+                positionOnWall: clampedPosition,
+              };
+            } else {
+              // door의 width가 edge 길이보다 작거나 같으면 위치만 업데이트
+              const wallAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+              
+              // door의 현재 positionOnWall 유지하되, 벽 안에 있도록 조정
+              const halfDoorWidth = doorWidth / 2;
+              const minPosition = halfDoorWidth / wallLength;
+              const maxPosition = 1 - (halfDoorWidth / wallLength);
+              const clampedPosition = Math.max(minPosition, Math.min(maxPosition, doorObj.positionOnWall));
+              
+              // 벽 위의 중심점 계산
+              const finalCenterX = p1.x + (p2.x - p1.x) * clampedPosition;
+              const finalCenterY = p1.y + (p2.y - p1.y) * clampedPosition;
+              
+              // 문의 기준점 계산
+              const doorBaseX = finalCenterX - (doorWidth / 2);
+              const doorBaseY = finalCenterY - 1; // 벽의 edge 위에서 1px 위에 배치
+              
+              return {
+                ...doorObj,
+                x: doorBaseX,
+                y: doorBaseY,
+                rotation: wallAngle,
+                positionOnWall: clampedPosition,
+              };
+            }
+          }
+          return doorObj;
+        });
+      }
+    }
+    
+    // store에 있는 objects 업데이트
+    setObjects(updatedObjects);
     
     // 오른쪽 위 디버그 패널에도 반영되게 selectedObject도 업데이트
     if (selectedObject?.id === obj.id) {
-      setSelectedObject({ ...obj, points: newPoints });
+      const updatedSelectedObj = updatedObjects.find(o => o.id === obj.id);
+      if (updatedSelectedObj) {
+        setSelectedObject({ ...obj, points: newPoints });
+      }
     }
   };
 
@@ -408,7 +518,7 @@ export default function Canvas() {
 
     const draggingObj = draggingObjectRef.current;
 
-    // 문인 경우 벽을 따라 이동 (room 밖으로 나가지 않도록 제한)
+    // 문인 경우 벽을 따라 이동 (처음 붙은 방에서만 이동 가능)
     if (draggingObj.type === 'door' && draggingObj.attachedTo) {
       const attachedRoom = objects.find(obj => obj.id === draggingObj.attachedTo);
       if (!attachedRoom) return;
@@ -416,11 +526,11 @@ export default function Canvas() {
       // 드래그 중인 문의 중심점
       const doorCenter = { x: svgPos.x, y: svgPos.y };
       
-      // 부착된 방의 벽 중 가장 가까운 벽 찾기
-      const nearestWall = findNearestWall(doorCenter);
+      // 부착된 방의 벽만 검색 (다른 방으로 넘어가지 않도록)
+      const nearestWall = findNearestWall(doorCenter, undefined, draggingObj.attachedTo);
       
-      // room의 벽 위에만 이동 가능 (room 밖으로 나가지 않도록)
-      if (nearestWall && nearestWall.obj.id === attachedRoom.id) {
+      // 부착된 방의 벽 위에서만 이동 가능
+      if (nearestWall) {
         // 벽 위의 위치 계산
         const positionOnWall = getPositionOnWall(doorCenter, nearestWall.edge);
         const wallLength = distance(nearestWall.edge.p1, nearestWall.edge.p2);
@@ -447,14 +557,15 @@ export default function Canvas() {
         // 문의 기준점 (0, 0)을 벽의 edge 위에 직접 배치
         // 문의 points는 { x: 0, y: 0 }부터 시작하므로, 기준점을 벽의 edge 위에 두면 됨
         const doorBaseX = finalCenterX - (doorWidth / 2);
-        const doorBaseY = finalCenterY; // 벽의 edge 위에 직접 배치
+        const doorBaseY = finalCenterY - pxToCm(EDGE_SNAP_SIZE / 2); // 벽의 edge 위에서 1px 위에 배치
 
+        // 문의 상대적 위치 정보 업데이트 (room 이동 시 함께 이동하기 위해)
         setObjects(objects.map(obj => 
           obj.id === draggingObj.id 
-            ? { ...obj, x: doorBaseX, y: doorBaseY, rotation: wallAngle } 
+            ? { ...obj, x: doorBaseX, y: doorBaseY, rotation: wallAngle, edgeIndex: nearestWall.edgeIndex, positionOnWall: clampedPosition } 
             : obj
         ));
-        setSelectedObject({ ...draggingObj, x: doorBaseX, y: doorBaseY, rotation: wallAngle });
+        setSelectedObject({ ...draggingObj, x: doorBaseX, y: doorBaseY, rotation: wallAngle, edgeIndex: nearestWall.edgeIndex, positionOnWall: clampedPosition });
         setIsDragging(true);
         return;
       }
@@ -484,11 +595,74 @@ export default function Canvas() {
     const snappedX = Math.round(newX / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
     const snappedY = Math.round(newY / DRAG_SIZE_OFFSET) * DRAG_SIZE_OFFSET;
     
-    setObjects(objects.map(obj => 
+    // room 이동 시 부착된 문들의 위치도 함께 업데이트
+    let updatedObjects = objects.map(obj => 
       obj.id === draggingObj.id 
         ? { ...obj, x: snappedX, y: snappedY } 
         : obj
-    ));
+    );
+    
+    // room이 이동한 경우, 부착된 문들의 위치 업데이트
+    if (draggingObj.type === 'room') {
+      const deltaX = snappedX - draggingObj.x;
+      const deltaY = snappedY - draggingObj.y;
+      
+      // 해당 room에 부착된 모든 문 찾기
+      const attachedDoors = updatedObjects.filter(obj => 
+        obj.type === 'door' && obj.attachedTo === draggingObj.id && 
+        obj.edgeIndex !== undefined && obj.positionOnWall !== undefined
+      );
+      
+      // 각 문의 위치 업데이트
+      updatedObjects = updatedObjects.map(obj => {
+        if (obj.type === 'door' && obj.attachedTo === draggingObj.id && 
+            obj.edgeIndex !== undefined && obj.positionOnWall !== undefined) {
+          // 업데이트된 room 찾기
+          const updatedRoom = updatedObjects.find(r => r.id === draggingObj.id);
+          if (!updatedRoom) return obj;
+          
+          // 해당 edge의 새로운 위치 계산
+          const edgeIndex = obj.edgeIndex;
+          const p1 = { 
+            x: updatedRoom.x + updatedRoom.points[edgeIndex].x, 
+            y: updatedRoom.y + updatedRoom.points[edgeIndex].y 
+          };
+          const p2 = { 
+            x: updatedRoom.x + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].x, 
+            y: updatedRoom.y + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].y 
+          };
+          
+          // 벽의 길이와 각도 계산
+          const wallLength = distance(p1, p2);
+          const wallAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+          
+          // 문의 위치 계산 (positionOnWall 비율 사용)
+          const doorWidth = obj.width || 80;
+          const halfDoorWidth = doorWidth / 2;
+          const minPosition = halfDoorWidth / wallLength;
+          const maxPosition = 1 - (halfDoorWidth / wallLength);
+          const clampedPosition = Math.max(minPosition, Math.min(maxPosition, obj.positionOnWall));
+          
+          // 벽 위의 중심점 계산
+          const finalCenterX = p1.x + (p2.x - p1.x) * clampedPosition;
+          const finalCenterY = p1.y + (p2.y - p1.y) * clampedPosition;
+          
+          // 문의 기준점 계산
+          const doorBaseX = finalCenterX - (doorWidth / 2);
+          const doorBaseY = finalCenterY - pxToCm(EDGE_SNAP_SIZE / 2); // 벽의 edge 위에서 1px 위에 배치
+          
+          return {
+            ...obj,
+            x: doorBaseX,
+            y: doorBaseY,
+            rotation: wallAngle,
+          };
+        }
+        return obj;
+      });
+    }
+    
+    setObjects(updatedObjects);
     setSelectedObject({ ...draggingObj, x: snappedX, y: snappedY });
     setIsDragging(true);
   };
@@ -615,26 +789,97 @@ export default function Canvas() {
       if (!selectedObject) return; // 선택된 오브젝트가 없으면 무시
       if(selectedObject.type === 'door') return;
       
+      // room 이동 시 부착된 문들의 위치도 함께 업데이트하는 헬퍼 함수
+      const updateObjectsWithDoors = (updatedRoom: FloorObject) => {
+        let updatedObjects = objects.map(obj => 
+          obj.id === selectedObject.id ? updatedRoom : obj
+        );
+        
+        // 해당 room에 부착된 모든 문 찾기
+        const attachedDoors = updatedObjects.filter(obj => 
+          obj.type === 'door' && obj.attachedTo === selectedObject.id && 
+          obj.edgeIndex !== undefined && obj.positionOnWall !== undefined
+        );
+        
+        // 각 문의 위치 업데이트
+        updatedObjects = updatedObjects.map(obj => {
+          if (obj.type === 'door' && obj.attachedTo === selectedObject.id && 
+              obj.edgeIndex !== undefined && obj.positionOnWall !== undefined) {
+            // 해당 edge의 새로운 위치 계산
+            const edgeIndex = obj.edgeIndex;
+            const p1 = { 
+              x: updatedRoom.x + updatedRoom.points[edgeIndex].x, 
+              y: updatedRoom.y + updatedRoom.points[edgeIndex].y 
+            };
+            const p2 = { 
+              x: updatedRoom.x + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].x, 
+              y: updatedRoom.y + updatedRoom.points[(edgeIndex + 1) % updatedRoom.points.length].y 
+            };
+            
+            // 벽의 길이와 각도 계산
+            const wallLength = distance(p1, p2);
+            const wallAngle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+            
+            // 문의 위치 계산 (positionOnWall 비율 사용)
+            const doorWidth = obj.width || 80;
+            const halfDoorWidth = doorWidth / 2;
+            const minPosition = halfDoorWidth / wallLength;
+            const maxPosition = 1 - (halfDoorWidth / wallLength);
+            const clampedPosition = Math.max(minPosition, Math.min(maxPosition, obj.positionOnWall));
+            
+            // 벽 위의 중심점 계산
+            const finalCenterX = p1.x + (p2.x - p1.x) * clampedPosition;
+            const finalCenterY = p1.y + (p2.y - p1.y) * clampedPosition;
+            
+            // 문의 기준점 계산
+            const doorBaseX = finalCenterX - (doorWidth / 2);
+            const doorBaseY = finalCenterY - pxToCm(EDGE_SNAP_SIZE / 2); // 벽의 edge 위에서 1px 위에 배치
+            
+            return {
+              ...obj,
+              x: doorBaseX,
+              y: doorBaseY,
+              rotation: wallAngle,
+            };
+          }
+          return obj;
+        });
+        
+        return updatedObjects;
+      };
+      
       if (e.key === 'ArrowUp') {
-        e.preventDefault(); 
-        setObjects(objects.map(obj => 
-          obj.id === selectedObject.id ? { ...obj, y: obj.y - DRAG_SIZE_OFFSET } : obj
-        ));
+        e.preventDefault();
+        const updatedRoom = { ...selectedObject, y: selectedObject.y - DRAG_SIZE_OFFSET };
+        const updatedObjects = selectedObject.type === 'room' 
+          ? updateObjectsWithDoors(updatedRoom)
+          : objects.map(obj => obj.id === selectedObject.id ? updatedRoom : obj);
+        setObjects(updatedObjects);
+        setSelectedObject(updatedRoom);
       } else if (e.key === 'ArrowDown') {
-        e.preventDefault(); 
-        setObjects(objects.map(obj => 
-          obj.id === selectedObject.id ? { ...obj, y: obj.y + DRAG_SIZE_OFFSET } : obj
-        ));
+        e.preventDefault();
+        const updatedRoom = { ...selectedObject, y: selectedObject.y + DRAG_SIZE_OFFSET };
+        const updatedObjects = selectedObject.type === 'room' 
+          ? updateObjectsWithDoors(updatedRoom)
+          : objects.map(obj => obj.id === selectedObject.id ? updatedRoom : obj);
+        setObjects(updatedObjects);
+        setSelectedObject(updatedRoom);
       } else if (e.key === 'ArrowLeft') {
-        e.preventDefault(); 
-        setObjects(objects.map(obj => 
-          obj.id === selectedObject.id ? { ...obj, x: obj.x - DRAG_SIZE_OFFSET } : obj
-        ));
+        e.preventDefault();
+        const updatedRoom = { ...selectedObject, x: selectedObject.x - DRAG_SIZE_OFFSET };
+        const updatedObjects = selectedObject.type === 'room' 
+          ? updateObjectsWithDoors(updatedRoom)
+          : objects.map(obj => obj.id === selectedObject.id ? updatedRoom : obj);
+        setObjects(updatedObjects);
+        setSelectedObject(updatedRoom);
       } else if (e.key === 'ArrowRight') {
-        e.preventDefault(); 
-        setObjects(objects.map(obj => 
-          obj.id === selectedObject.id ? { ...obj, x: obj.x + DRAG_SIZE_OFFSET } : obj
-        ));
+        e.preventDefault();
+        const updatedRoom = { ...selectedObject, x: selectedObject.x + DRAG_SIZE_OFFSET };
+        const updatedObjects = selectedObject.type === 'room' 
+          ? updateObjectsWithDoors(updatedRoom)
+          : objects.map(obj => obj.id === selectedObject.id ? updatedRoom : obj);
+        setObjects(updatedObjects);
+        setSelectedObject(updatedRoom);
       }
     }
     
@@ -730,12 +975,16 @@ export default function Canvas() {
         <circle cx="0" cy="0" r="10" fill="red" />
         <text x="15" y="20" fontSize="20" fill="red">Origin (0,0)</text>
         
-        {[...objects].sort((a, b) => {
-          // 선택한 오브젝트를 가장 위에 랜더링 하려고 했는데 svg에서는 z-index가 안돼서 태그 순서를 변경 
-          if (a.id === selectedObject?.id) return 1;
-          if (b.id === selectedObject?.id) return -1;
-          return 0;
-        }).map((obj) => {
+        {[...objects]
+          .map((obj, index) => ({ obj, index })) // 원래 인덱스 저장
+          .sort((a, b) => {
+            // 선택한 오브젝트를 가장 위에 렌더링 (svg에서는 z-index가 안돼서 태그 순서로 처리)
+            if (a.obj.id === selectedObject?.id) return 1;
+            if (b.obj.id === selectedObject?.id) return -1;
+            // 나머지는 원래 배열 순서 유지
+            return a.index - b.index;
+          })
+          .map(({ obj }) => {
           // 문인 경우 rotation 적용
           const center = getObjectCenter(obj.points);
           const rotation = obj.rotation ?? 0;
@@ -758,6 +1007,60 @@ export default function Canvas() {
               stroke={selectedObject?.id === obj.id ? getActiveBorderColor(obj.borderColor) : obj.borderColor}
               strokeWidth={ obj.type === 'door' ? 0 : pxToCm(5)}
             />
+            
+            {/* 문 열리는 영역 표시 */}
+            {obj.type === 'door' && (() => {
+              // points에서 문의 실제 크기와 위치 계산
+              const xs = obj.points.map(p => p.x);
+              const ys = obj.points.map(p => p.y);
+              const minX = Math.min(...xs);
+              const minY = Math.min(...ys);
+              const doorWidth = Math.max(...xs) - minX;
+              
+              if (doorWidth <= 0) return null;
+              
+              const doorOpenDirection = obj.doorOpenDirection ?? 1;
+              
+              // 힌지 위치 (문의 왼쪽 상단, points의 실제 시작점)
+              const pivotX = minX;
+              const pivotY = minY;
+              
+              // 문의 로컬 좌표계에서 호를 그림 (transform의 rotation이 자동 적용됨)
+              // - 문은 X+ 방향으로 뻗어있음 (시작 각도 = 0)
+              // - doorOpenDirection=1: Y+ 방향 (아래로, 90도) → 방 안으로
+              // - doorOpenDirection=-1: Y- 방향 (위로, -90도) → 방 밖으로
+              
+              const startAngleRad = 0; // 문이 닫힌 상태 (X+ 방향)
+              const openAngleRad = (90 * Math.PI) / 180;
+              const endAngleRad = doorOpenDirection > 0 ? openAngleRad : -openAngleRad;
+              
+              // 호의 시작점 (문 끝점)
+              const startX = pivotX + doorWidth; // cos(0) = 1
+              const startY = pivotY;              // sin(0) = 0
+              
+              // 호의 끝점 (문이 열린 상태)
+              const endX = pivotX + doorWidth * Math.cos(endAngleRad);
+              const endY = pivotY + doorWidth * Math.sin(endAngleRad);
+              
+              // large-arc-flag: 90도는 항상 0
+              const largeArcFlag = 0;
+              // sweep-flag: 시계방향(1), 반시계방향(0)
+              const sweepFlag = doorOpenDirection > 0 ? 1 : 0;
+              
+              // 호 경로: 힌지 → 문 끝점 → 호 → 힌지
+              const arcPath = `M ${pivotX} ${pivotY} L ${startX} ${startY} A ${doorWidth} ${doorWidth} 0 ${largeArcFlag} ${sweepFlag} ${endX} ${endY} Z`;
+              
+              return (
+                <path
+                  d={arcPath}
+                  fill="rgba(255, 255, 255, 1)"
+                  stroke="rgba(0, 0, 0, 1)"
+                  strokeWidth="1.5"
+                  strokeDasharray="3,3"
+                  opacity="0.6"
+                />
+              );
+            })()}
             
             {/* 
               선택된 오브젝트한테만 변 핸들 보여줌
